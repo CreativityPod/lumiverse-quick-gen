@@ -1,4 +1,4 @@
-// QuickGen 0.1.1 — generated from src/.
+// QuickGen 0.1.2 — generated from src/.
 
 // src/model.ts
 function workflows(connection) {
@@ -11,7 +11,14 @@ function workflows(connection) {
 function fieldControls(workflow) {
   if (!workflow)
     return [];
-  return workflow.config.field_mappings.filter((mapping) => !["positive_prompt", "negative_prompt"].includes(mapping.mappedAs)).flatMap((mapping) => {
+  const unique = new Map;
+  for (const mapping of workflow.config.field_mappings) {
+    const key = `${mapping.nodeId}:${mapping.fieldName}`;
+    const previous = unique.get(key);
+    if (!previous || previous.mappedAs === "custom" && mapping.mappedAs !== "custom")
+      unique.set(key, mapping);
+  }
+  return [...unique.values()].filter((mapping) => !["positive_prompt", "negative_prompt"].includes(mapping.mappedAs)).flatMap((mapping) => {
     const node = workflow.config.workflow_api_json?.[mapping.nodeId];
     const value = node?.inputs[mapping.fieldName];
     if (!["string", "number", "boolean"].includes(typeof value))

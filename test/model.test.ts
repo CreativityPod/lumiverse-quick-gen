@@ -76,3 +76,33 @@ test('migrates the selected legacy recipe without deleting its other steps or re
   expect(JSON.stringify(old)).toBe(before)
   expect(migrateSettings(null).step.source).toBe('none')
 })
+
+test.each([false, true])('deduplicates a workflow path input with custom and init_image mappings (reversed=%s)', (reversed) => {
+  const copy = structuredClone(catalog)
+  const config = (copy.connections[0]!.metadata.comfyui_workflows as Workflow[])[0]!.config
+  const mappings = [
+    { nodeId: '2', fieldName: 'image', mappedAs: 'custom' },
+    { nodeId: '2', fieldName: 'image', mappedAs: 'init_image' },
+    { nodeId: '2', fieldName: 'image', mappedAs: 'custom' },
+  ]
+  config.field_mappings = [config.field_mappings[0]!, ...(reversed ? mappings.reverse() : mappings)]
+  config.workflow_api_json!['2'] = { class_type: 'LoadImagePath', _meta: { title: 'Load Image (Path)' }, inputs: { image: '/old/image.png' } }
+  config.field_options = {}
+  const before = JSON.stringify(config)
+  const controls = fieldControls((copy.connections[0]!.metadata.comfyui_workflows as Workflow[])[0])
+  expect(controls).toHaveLength(1)
+  expect(controls[0]!.options).toEqual([])
+  const input = buildInput({ ...step(), source: 'none', fields: { '2:image': '/new/image.png' } }, 'video', copy, { chatId: 'chat', jobId: 'job' })
+  expect(input.parameters.comfyui_field_values.init_image).toBe('/new/image.png')
+  expect(input.parameters.comfyui_field_values.custom).toEqual({})
+  const source = buildInput({ ...step(), fields: { '2:image': '/new/image.png' } }, 'video', copy, { chatId: 'chat', jobId: 'job', sourceImageId: 'asset' })
+  expect(source.parameters.comfyui_field_values.init_image).toBeUndefined()
+  expect(source.parameters.comfyui_field_values.custom).toEqual({})
+  expect(JSON.stringify(config)).toBe(before)
+})
+test('retains separate workflow nodes even when their titles and input names match', () => {
+  const copy = structuredClone(workflow)
+  copy.config.workflow_api_json!['4'] = structuredClone(copy.config.workflow_api_json!['2']!)
+  copy.config.field_mappings.push({ nodeId: '4', fieldName: 'image', mappedAs: 'custom' })
+  expect(fieldControls(copy).filter((field) => field.key.endsWith(':image')).map((field) => field.key)).toEqual(['2:image', '4:image'])
+})

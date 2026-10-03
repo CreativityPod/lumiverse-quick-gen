@@ -42,7 +42,15 @@ export function workflows(connection?: Connection): Workflow[] {
 
 export function fieldControls(workflow?: Workflow): FieldControl[] {
   if (!workflow) return []
-  return workflow.config.field_mappings.filter((mapping) => !['positive_prompt', 'negative_prompt'].includes(mapping.mappedAs)).flatMap((mapping) => {
+  // ImgGen permits a node input to be mapped both to a standard role and as
+  // a custom field. Render it once, retaining the standard injection behavior.
+  const unique = new Map<string, Mapping>()
+  for (const mapping of workflow.config.field_mappings) {
+    const key = `${mapping.nodeId}:${mapping.fieldName}`
+    const previous = unique.get(key)
+    if (!previous || (previous.mappedAs === 'custom' && mapping.mappedAs !== 'custom')) unique.set(key, mapping)
+  }
+  return [...unique.values()].filter((mapping) => !['positive_prompt', 'negative_prompt'].includes(mapping.mappedAs)).flatMap((mapping) => {
     const node = workflow.config.workflow_api_json?.[mapping.nodeId]
     const value = node?.inputs[mapping.fieldName]
     if (!['string', 'number', 'boolean'].includes(typeof value)) return []

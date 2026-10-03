@@ -17,9 +17,11 @@ QuickGen remembers your last selection automatically in its per-user storage. â€
 
 Version 0.1.1 uses one workflow panel and removes the New, Duplicate, Delete, and automatic Run sequence controls. Those buttons previously managed QuickGen recipes, which were saved combinations of existing workflows and presets. They never managed the underlying ComfyUI workflows. On first use after upgrading, QuickGen carries over the selected recipe's configured video step, or its image step if no video step was configured. The old recipe storage is retained, and completed assets remain available.
 
+Version 0.1.2 removes duplicate controls when the same node input has both a standard mapping and a CUSTOM FIELD mapping. The one remaining control keeps its saved value and options. Separate nodes with similar names remain separate controls.
+
 ## Update an existing installation
 
-Replace `src/`, `dist/`, `spindle.json`, `package.json`, and `scripts/` in the installed extension's `repo` folder with this version, then reload the QuickGen extension and refresh the Lumiverse page. Preserve the extension's user storage. Version 0.1.1 uses the same core patch as 0.1.0; no further Lumiverse core changes are required.
+Replace `src/`, `dist/`, `spindle.json`, `package.json`, and `scripts/` in the installed extension's `repo` folder with this version, then reload the QuickGen extension and refresh the Lumiverse page. Preserve the extension's user storage. Version 0.1.2 uses the same core patch as 0.1.0; no further Lumiverse core changes are required.
 
 ## Install locally
 
@@ -54,7 +56,7 @@ No database migrations, global setting changes, frontend core changes, or genera
 
 ## Scope and limits
 
-- Version 0.1.1 supports saved **ComfyUI** workflows. SwarmUI and arbitrary MCP runners are not implemented.
+- Version 0.1.2 supports saved **ComfyUI** workflows. SwarmUI and arbitrary MCP runners are not implemented.
 - A mapped positive prompt is required. The workflow's models and custom nodes must already be installed on the configured ComfyUI server. A source image requires an `init_image` mapping.
 - For videos, use MP4 or WebM for browser playback. Other collected formats depend on the browser's codecs. Use **Final output node** when multiple nodes save the same kind of media.
 - Progress and cancellation work while the extension backend is running; changing chats or closing the drawer does not end a job. A Lumiverse/extension restart ends live tracking. The last job and completed assets persist, but unfinished jobs are not automatically resumed.
