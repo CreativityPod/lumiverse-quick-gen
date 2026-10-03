@@ -1,0 +1,19 @@
+{
+  "name": "lumiverse-quick-gen",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "bun scripts/build.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "check": "bun run typecheck && bun run build && bun test"
+  },
+  "devDependencies": {
+    "bun-types": "^1.4.2",
+    "lumiverse-spindle-types": "0.6.37",
+    "typescript": "7.0.2",
+    "jsdom": "^29.0.1",
+    "@types/jsdom": "^28.0.1"
+  }
+}

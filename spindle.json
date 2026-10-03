@@ -1,0 +1,13 @@
+{
+  "version": "0.1.0",
+  "name": "QuickGen",
+  "identifier": "quick_gen",
+  "author": "CreativityPod",
+  "github": "https://github.com/CreativityPod/lumiverse-quick-gen",
+  "homepage": "https://github.com/CreativityPod/lumiverse-quick-gen",
+  "description": "Run saved ComfyUI image and video recipes with per-run Main Presets and custom fields.",
+  "permissions": ["image_gen", "images"],
+  "entry_backend": "dist/backend.js",
+  "entry_frontend": "dist/frontend.js",
+  "minimum_lumiverse_version": "1.2.4"
+}

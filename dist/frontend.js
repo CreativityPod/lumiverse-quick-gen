@@ -1,0 +1,461 @@
+// QuickGen 0.1.0 — generated from src/.
+
+// src/model.ts
+var emptyStep = (kind) => ({
+  connectionId: "",
+  workflowId: "",
+  presetId: "",
+  prompt: "",
+  negativePrompt: "",
+  fields: {},
+  source: kind === "video" ? "last" : "none",
+  outputNodeId: "",
+  bypassLoras: kind === "video",
+  timeoutSeconds: kind === "video" ? 1800 : 300
+});
+var newRecipe = (id, name = "New recipe") => ({ id, name, image: emptyStep("image"), video: emptyStep("video") });
+function workflows(connection) {
+  const entries = connection?.metadata.comfyui_workflows;
+  if (Array.isArray(entries) && entries.length)
+    return entries.filter((entry) => !!entry?.id && !!entry?.config?.workflow_api_json);
+  const config = connection?.metadata.comfyui;
+  return config?.workflow_api_json ? [{ id: "__legacy__", name: "Imported workflow", config }] : [];
+}
+function fieldControls(workflow) {
+  if (!workflow)
+    return [];
+  return workflow.config.field_mappings.filter((mapping) => !["positive_prompt", "negative_prompt", "init_image"].includes(mapping.mappedAs)).flatMap((mapping) => {
+    const node = workflow.config.workflow_api_json?.[mapping.nodeId];
+    const value = node?.inputs[mapping.fieldName];
+    if (!["string", "number", "boolean"].includes(typeof value))
+      return [];
+    const key = `${mapping.nodeId}:${mapping.fieldName}`;
+    return [{ key, semantic: mapping.mappedAs, label: `${mapping.fieldName.replaceAll("_", " ")} · ${node?._meta?.title || node?.class_type || mapping.nodeId} (${mapping.nodeId})`, value, options: workflow.config.field_options?.[key] ?? [] }];
+  });
+}
+
+// src/styles.ts
+var styles = `
+.qg { --qg-border:var(--lumiverse-border,rgba(160,174,195,.23)); --qg-muted:var(--lumiverse-text-muted,#9aa6b8); color:var(--lumiverse-text,#e8edf5); font:inherit; padding:16px; box-sizing:border-box; max-width:900px; margin:auto; }
+.qg * {box-sizing:border-box} .qg h2 {font-size:18px; margin:0 0 6px} .qg p {margin:0 0 16px; color:var(--qg-muted); font-size:12px; line-height:1.6}
+.qg-toolbar,.qg-actions {display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:14px} .qg-toolbar select {flex:1; min-width:150px}
+.qg button,.qg input,.qg select,.qg textarea {font:inherit; color:inherit; background:var(--lumiverse-fill,#202a39); border:1px solid var(--qg-border); border-radius:7px; padding:9px 10px; min-height:36px}
+.qg input:not([type=checkbox]),.qg select,.qg textarea {width:100%; min-width:0} .qg textarea {min-height:72px; resize:vertical} .qg input[type=checkbox] {accent-color:#62bdce; min-height:0}
+.qg button {cursor:pointer; font-size:12px; white-space:nowrap} .qg button:hover {border-color:#62bdce} .qg button:disabled {opacity:.5; cursor:default}
+.qg button.qg-primary {background:var(--lumiverse-primary,#237d8e); color:white; border-color:transparent} .qg button.qg-danger {color:#f6a6a6}
+.qg-grid {display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; margin:16px 0} .qg-step {border:1px solid var(--qg-border); border-radius:10px; padding:14px; background:var(--lumiverse-fill-subtle,rgba(255,255,255,.025))}
+.qg-step h3 {font-size:14px; margin:0 0 16px; display:flex; align-items:center; gap:8px} .qg-number {border-radius:50%; width:23px; height:23px; display:inline-grid; place-items:center; background:rgba(98,189,206,.14); color:#80ccda; font-size:12px}
+.qg label {display:block; font-size:12px; margin:0 0 12px} .qg label>span {display:block; margin-bottom:6px; color:var(--qg-muted)} .qg small {font-size:11px; color:var(--qg-muted)}
+.qg details {border-top:1px solid var(--qg-border); padding-top:12px; margin-top:12px} .qg summary {font-size:12px; cursor:pointer; margin-bottom:12px} .qg .qg-check {display:flex; gap:8px; align-items:center}
+.qg-status {border:1px solid var(--qg-border); border-radius:10px; padding:12px; margin-top:12px; font-size:12px; line-height:1.6} .qg-status[role=alert] {color:#f6a6a6; border-color:rgba(230,110,110,.4)}
+.qg progress {width:100%; height:6px; accent-color:#62bdce; margin-top:8px} .qg-results {display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; margin-top:14px}
+.qg-results figure {margin:0; overflow:hidden; border:1px solid var(--qg-border); border-radius:10px} .qg-results img,.qg-results video {width:100%; max-height:360px; object-fit:contain; display:block; background:rgba(0,0,0,.2)} .qg-results figcaption {padding:10px; font-size:12px}
+.qg a {color:#80ccda} .qg footer {margin-top:16px; color:var(--qg-muted); font-size:11px} .qg .qg-saved {color:var(--qg-muted); font-size:11px}
+@media(max-width:700px) {.qg-grid{grid-template-columns:1fr}.qg{padding:12px}}
+`;
+
+// src/frontend.ts
+var clone = (value) => JSON.parse(JSON.stringify(value));
+var uid = () => `qg-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+function setup(ctx) {
+  const tab = ctx.ui.registerDrawerTab({ id: "quickgen", title: "QuickGen", shortName: "QuickGen", description: "ComfyUI recipes for images and video", keywords: ["image", "video", "comfyui", "workflow", "preset"], iconSvg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="m13 2-9 12h7l-1 8 10-13h-7l1-7Z"/></svg>' });
+  const action = ctx.ui.registerInputBarAction({ id: "quickgen", label: "QuickGen", subtitle: "Image and video recipes" });
+  const offAction = action.onClick(() => tab.activate());
+  const removeStyle = ctx.dom.addStyle(styles);
+  const root = document.createElement("section");
+  root.className = "qg";
+  tab.root.append(root);
+  let state = null;
+  let draft = null;
+  let statusRoot;
+  let savedLabel;
+  let error = "";
+  let disposed = false;
+  let starting = false;
+  let saveTimer;
+  const pending = new Map;
+  function request(type, payload = {}) {
+    const requestId = uid();
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        pending.delete(requestId);
+        reject(new Error("QuickGen did not respond. Check that its backend is enabled."));
+      }, 30000);
+      pending.set(requestId, { resolve: (value) => resolve(value), reject, timer });
+      ctx.sendToBackend({ type, requestId, ...payload });
+    });
+  }
+  const offBackend = ctx.onBackendMessage((payload) => {
+    const message = payload;
+    if (message.requestId) {
+      const callback = pending.get(message.requestId);
+      if (callback) {
+        clearTimeout(callback.timer);
+        pending.delete(message.requestId);
+        if (message.ok)
+          callback.resolve(message.result);
+        else
+          callback.reject(new Error(message.error || "QuickGen failed."));
+      }
+    }
+    if (message.type === "qg_job" && message.job && state) {
+      state.job = message.job;
+      renderStatus();
+    }
+  });
+  const el = (tag, text = "", className = "") => {
+    const node = document.createElement(tag);
+    if (text)
+      node.textContent = text;
+    if (className)
+      node.className = className;
+    return node;
+  };
+  function button(text, run, className = "") {
+    const node = el("button", text, className);
+    node.type = "button";
+    node.onclick = () => {
+      Promise.resolve().then(run).catch(showError);
+    };
+    return node;
+  }
+  function showError(reason) {
+    error = reason instanceof Error ? reason.message : String(reason);
+    renderStatus();
+  }
+  function control(label, node) {
+    const wrapper = el("label");
+    wrapper.append(el("span", label), node);
+    return wrapper;
+  }
+  function select(items, value, changed2) {
+    const node = el("select");
+    for (const item of items) {
+      const option = el("option", item.label);
+      option.value = item.value;
+      node.append(option);
+    }
+    if (value && !items.some((item) => item.value === value)) {
+      const missing = el("option", `Unavailable selection (${value})`);
+      missing.value = value;
+      node.append(missing);
+    }
+    node.value = value;
+    node.onchange = () => changed2(node.value);
+    return node;
+  }
+  function defaultSelection(step) {
+    if (!state?.catalog)
+      return;
+    if (!step.connectionId)
+      step.connectionId = state.catalog.connections.find((c) => c.id === state.catalog.activeConnectionId)?.id || state.catalog.connections[0]?.id || "";
+    const connection = state.catalog.connections.find((c) => c.id === step.connectionId);
+    if (!step.workflowId)
+      step.workflowId = String(connection?.metadata.comfyui_active_workflow_id || workflows(connection)[0]?.id || "");
+  }
+  async function save() {
+    if (!draft || !state)
+      return;
+    clearTimeout(saveTimer);
+    state.settings = await request("qg_save", { recipe: clone(draft) });
+    if (savedLabel)
+      savedLabel.textContent = "Saved";
+  }
+  function changed() {
+    if (savedLabel)
+      savedLabel.textContent = "Saving…";
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => {
+      save().catch(showError);
+    }, 600);
+  }
+  function renderStep(kind) {
+    const step = draft[kind];
+    defaultSelection(step);
+    const connection = state.catalog?.connections.find((c) => c.id === step.connectionId);
+    const list = workflows(connection);
+    const workflow = list.find((w) => w.id === step.workflowId);
+    const panel = el("section", "", "qg-step");
+    const title = el("h3");
+    title.append(el("span", kind === "image" ? "1" : "2", "qg-number"), document.createTextNode(kind === "image" ? "Image step" : "Video step"));
+    panel.append(title);
+    const connections = state.catalog?.connections ?? [];
+    panel.append(control("ComfyUI connection", select([{ value: "", label: "Choose a connection" }, ...connections.map((c) => ({ value: c.id, label: c.name }))], step.connectionId, (value) => {
+      step.connectionId = value;
+      step.workflowId = "";
+      step.fields = {};
+      step.outputNodeId = "";
+      defaultSelection(step);
+      changed();
+      render();
+    })));
+    panel.append(control("Workflow", select([{ value: "", label: "Choose a saved workflow" }, ...list.map((w) => ({ value: w.id, label: w.name }))], step.workflowId, (value) => {
+      step.workflowId = value;
+      step.fields = {};
+      step.outputNodeId = "";
+      changed();
+      render();
+    })));
+    panel.append(control("Main Preset", select([{ value: "", label: "Use active Main Preset" }, ...(state.catalog?.presets ?? []).map((p) => ({ value: p.id, label: p.name }))], step.presetId, (value) => {
+      step.presetId = value;
+      changed();
+    })));
+    const sourceItems = [{ value: "none", label: kind === "video" ? "None · text to video" : "None · text to image" }, { value: "last", label: "Previous QuickGen image" }, ...state.assets.map((asset) => ({ value: asset.id, label: asset.original_filename || asset.id }))];
+    panel.append(control("Source image", select(sourceItems, step.source, (value) => {
+      step.source = value;
+      changed();
+    })));
+    const controls = fieldControls(workflow).filter((field) => step.bypassLoras || !field.semantic.startsWith("lora_"));
+    const fields = el("details");
+    fields.open = true;
+    fields.append(el("summary", `Workflow fields · ${controls.length}`));
+    if (!controls.length)
+      fields.append(el("small", "Map CUSTOM FIELDS in ImgGen when importing the workflow to expose more controls here."));
+    for (const field of controls) {
+      const value = Object.hasOwn(step.fields, field.key) ? step.fields[field.key] : field.value;
+      const update = (value2) => {
+        step.fields[field.key] = value2;
+        changed();
+      };
+      let node;
+      if (field.options.length) {
+        node = select(field.options.map((value2) => ({ value: value2, label: value2 })), String(value), (value2) => update(typeof field.value === "number" ? Number(value2) : typeof field.value === "boolean" ? value2 === "true" : value2));
+      } else if (typeof field.value === "boolean") {
+        const input = el("input");
+        input.type = "checkbox";
+        input.checked = Boolean(value);
+        input.onchange = () => update(input.checked);
+        node = input;
+      } else {
+        const input = el("input");
+        input.type = typeof field.value === "number" ? "number" : "text";
+        input.step = "any";
+        input.value = String(value);
+        input.onchange = () => update(typeof field.value === "number" ? Number(input.value) : input.value);
+        node = input;
+      }
+      fields.append(control(field.label, node));
+    }
+    panel.append(fields);
+    const advanced = el("details");
+    advanced.append(el("summary", "Prompt and run options"));
+    for (const [key, label] of [["prompt", "Prompt override · optional"], ["negativePrompt", "Negative prompt override · optional"]]) {
+      const input = el("textarea");
+      input.value = step[key];
+      input.onchange = () => {
+        step[key] = input.value;
+        changed();
+      };
+      advanced.append(control(label, input));
+    }
+    const nodes = Object.entries(workflow?.config.workflow_api_json ?? {}).filter(([, node]) => /save|combine|preview|output/i.test(node.class_type));
+    advanced.append(control("Final output node", select([{ value: "", label: `Auto · saved ${kind} output` }, ...nodes.map(([id, node]) => ({ value: id, label: `${node._meta?.title || node.class_type} (${id})` }))], step.outputNodeId, (value) => {
+      step.outputNodeId = value;
+      changed();
+    })));
+    const timeout = el("input");
+    timeout.type = "number";
+    timeout.min = "15";
+    timeout.max = "3600";
+    timeout.value = String(step.timeoutSeconds);
+    timeout.onchange = () => {
+      step.timeoutSeconds = Number(timeout.value);
+      changed();
+    };
+    advanced.append(control("Generation timeout · seconds", timeout));
+    const bypass = el("input");
+    bypass.type = "checkbox";
+    bypass.checked = step.bypassLoras;
+    bypass.onchange = () => {
+      step.bypassLoras = bypass.checked;
+      changed();
+      render();
+    };
+    const bypassLabel = control("Skip ImgGen character and active preset LoRAs for this step", bypass);
+    bypassLabel.className = "qg-check";
+    advanced.append(bypassLabel);
+    panel.append(advanced);
+    return panel;
+  }
+  async function generate(mode) {
+    if (!draft || !state)
+      return;
+    starting = true;
+    error = "";
+    renderStatus();
+    try {
+      await save();
+      state.job = await request("qg_start", { recipe: clone(draft), mode, chatId: ctx.getActiveChat().chatId });
+    } finally {
+      starting = false;
+      renderStatus();
+    }
+  }
+  function renderStatus() {
+    if (!statusRoot || disposed)
+      return;
+    statusRoot.replaceChildren();
+    const job = state?.job;
+    const busy = starting || job?.status === "running" || job?.status === "cancelling";
+    tab.setBadge(busy ? "…" : null);
+    const actions = el("div", "", "qg-actions");
+    for (const [mode, label] of [["image", "Generate image"], ["video", "Generate video"], ["sequence", "Run sequence"]]) {
+      const node = button(label, () => generate(mode), mode === "sequence" ? "qg-primary" : "");
+      node.disabled = busy || !state?.supported || !state.catalog?.connections.length;
+      actions.append(node);
+    }
+    if (busy && !starting)
+      actions.append(button("Cancel", async () => {
+        await request("qg_cancel");
+      }, "qg-danger"));
+    statusRoot.append(actions);
+    const text = error || job?.error || (job ? `${job.recipeName} · ${job.status === "running" ? `Generating ${job.phase}` : job.status}` : "Choose your workflows and presets, then generate.");
+    const status = el("div", text, "qg-status");
+    status.setAttribute("role", error || job?.error ? "alert" : "status");
+    status.setAttribute("aria-live", "polite");
+    if (busy && job?.progress) {
+      const { step, totalSteps, nodeId } = job.progress;
+      if (nodeId)
+        status.append(el("div", `Node ${nodeId}${totalSteps ? ` · ${step || 0}/${totalSteps}` : ""}`));
+      const progress = el("progress");
+      if (totalSteps) {
+        progress.max = totalSteps;
+        progress.value = step || 0;
+      }
+      status.append(progress);
+    }
+    statusRoot.append(status);
+    if (job?.chatId && job.chatId !== ctx.getActiveChat().chatId)
+      statusRoot.append(el("p", "These results belong to the chat where the job was started."));
+    const results = el("div", "", "qg-results");
+    for (const kind of ["image", "video"]) {
+      const result = job?.[kind];
+      if (!result)
+        continue;
+      const figure = el("figure");
+      const media = result.mediaType === "video" ? el("video") : el("img");
+      media.src = result.mediaUrl;
+      if (media instanceof HTMLVideoElement) {
+        media.controls = true;
+        media.preload = "metadata";
+        media.playsInline = true;
+      } else
+        media.alt = `QuickGen ${kind} result`;
+      const caption = el("figcaption");
+      const link = el("a", `Open ${kind}`);
+      link.href = result.mediaUrl;
+      link.target = "_blank";
+      link.rel = "noopener";
+      caption.append(link);
+      const prompt = el("details");
+      prompt.append(el("summary", "Resolved prompt"), el("p", result.prompt));
+      caption.append(prompt);
+      figure.append(media, caption);
+      results.append(figure);
+    }
+    statusRoot.append(results);
+  }
+  function render() {
+    if (disposed)
+      return;
+    root.replaceChildren();
+    root.append(el("h2", "QuickGen"), el("p", "Saved ComfyUI workflows, Main Presets, and fields for each step. Run separately or generate an image followed by a video."));
+    if (!state || !draft) {
+      root.append(el("p", error || "Loading QuickGen…"));
+      return;
+    }
+    if (!state.supported)
+      root.append(el("p", "Apply the included Lumiverse core patch and restart to enable QuickGen."));
+    else if (!state.catalog)
+      root.append(button("Grant generation permissions", async () => {
+        await ctx.permissions.request(["image_gen", "images"]);
+        await refresh();
+      }));
+    const toolbar = el("div", "", "qg-toolbar");
+    toolbar.append(select(state.settings.recipes.map((r) => ({ value: r.id, label: r.name })), draft.id, (value) => {
+      (async () => {
+        await save();
+        state.settings = await request("qg_save", { selectedId: value });
+        draft = clone(state.settings.recipes.find((r) => r.id === value));
+        render();
+      })().catch(showError);
+    }));
+    toolbar.append(button("New", async () => {
+      await save();
+      draft = newRecipe(uid());
+      render();
+      changed();
+    }), button("Duplicate", async () => {
+      await save();
+      draft = { ...clone(draft), id: uid(), name: `${draft.name} copy` };
+      render();
+      changed();
+    }), button("Delete", async () => {
+      const confirm = await ctx.ui.showConfirm({ title: "Delete recipe", message: `Delete “${draft.name}”? Generated assets are kept.`, variant: "danger", confirmLabel: "Delete recipe" });
+      if (!confirm.confirmed)
+        return;
+      clearTimeout(saveTimer);
+      state.settings = await request("qg_save", { deleteId: draft.id });
+      draft = clone(state.settings.recipes.find((r) => r.id === state.settings.selectedId));
+      render();
+    }), button("Refresh", async () => {
+      await save();
+      await refresh();
+    }));
+    root.append(toolbar);
+    const name = el("input");
+    name.value = draft.name;
+    name.onchange = () => {
+      draft.name = name.value;
+      changed();
+    };
+    root.append(control("Recipe name", name));
+    savedLabel = el("span", "Saved", "qg-saved");
+    root.append(savedLabel);
+    const grid = el("div", "", "qg-grid");
+    grid.append(renderStep("image"), renderStep("video"));
+    root.append(grid);
+    statusRoot = el("div");
+    root.append(statusRoot);
+    renderStatus();
+    root.append(el("footer", "Recipe choices are saved in QuickGen. “Use active” is captured when a run starts. ImgGen’s active selections stay unchanged."));
+  }
+  async function refresh() {
+    error = "";
+    const next = await request("qg_bootstrap");
+    if (disposed)
+      return;
+    state = next;
+    draft = clone(state.settings.recipes.find((r) => r.id === state.settings.selectedId) ?? state.settings.recipes[0]);
+    render();
+  }
+  const offChat = ctx.events.on("CHAT_SWITCHED", () => renderStatus());
+  const offConnections = ctx.events.on("IMAGE_GEN_CONNECTION_CHANGED", () => {
+    if (savedLabel)
+      savedLabel.textContent = "Connections changed · click Refresh";
+  });
+  render();
+  refresh().catch((reason) => {
+    error = reason instanceof Error ? reason.message : String(reason);
+    render();
+  });
+  return () => {
+    disposed = true;
+    clearTimeout(saveTimer);
+    for (const callback of pending.values()) {
+      clearTimeout(callback.timer);
+      callback.reject(new Error("QuickGen panel closed."));
+    }
+    pending.clear();
+    offBackend();
+    offChat();
+    offConnections();
+    offAction();
+    action.destroy();
+    tab.destroy();
+    removeStyle();
+  };
+}
+export {
+  setup
+};

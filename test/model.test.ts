@@ -1,0 +1,73 @@
+import { expect, test } from 'bun:test'
+import { buildInput, executeSteps, fieldControls, newRecipe, type Catalog, type Result, type Workflow } from '../src/model'
+const workflow: Workflow = { id: 'w', name: 'Example', config: {
+  workflow_api_json: {
+    '1': { class_type: 'CLIPTextEncode', inputs: { text: 'prompt' } },
+    '2': { class_type: 'LoadImage', inputs: { image: 'default.png' } },
+    '3': { class_type: 'Video', inputs: { length: 81, model: 'small', enabled: true } },
+  },
+  field_mappings: [
+    { nodeId: '1', fieldName: 'text', mappedAs: 'positive_prompt' },
+    { nodeId: '2', fieldName: 'image', mappedAs: 'init_image' },
+    ...['length', 'model', 'enabled'].map((fieldName) => ({ nodeId: '3', fieldName, mappedAs: 'custom' })),
+  ], field_options: { '3:model': ['small', 'large'] },
+} }
+const catalog: Catalog = { activeId: 'active', activeConnectionId: 'c', presets: [{ id: 'active', name: 'Main', mode: 'parsed_custom' }, { id: 'other', name: 'Motion', mode: 'custom' }], connections: [{ id: 'c', name: 'Comfy', provider: 'comfyui', metadata: { comfyui_workflows: [workflow] } }] }
+function step() { return { ...newRecipe('r').video, connectionId: 'c', workflowId: 'w' } }
+test('uses a selected preset and custom types without mutating defaults', () => {
+  const before = JSON.stringify({ workflow, catalog })
+  const input = buildInput({ ...step(), presetId: 'other', fields: { '3:length': 121, '3:enabled': false, '3:model': 'large' } }, 'video', catalog, { chatId: 'chat', jobId: 'job', sourceImageId: 'image' })
+  expect(input.promptPresetId).toBe('other')
+  expect(input.promptMode).toBe('custom')
+  expect(input.parameters.comfyui_field_values).toEqual({ custom: { '3:length': 121, '3:model': 'large', '3:enabled': false }, node_fields: {} })
+  expect(input.includeDataUrl).toBe(false)
+  expect(JSON.stringify({ workflow, catalog })).toBe(before)
+})
+test('captures active preset as an explicit ID', () => {
+  const input = buildInput(step(), 'video', catalog, { chatId: 'chat', jobId: 'job', sourceImageId: 'image' })
+  expect(input.promptPresetId).toBe('active')
+  expect(input.promptMode).toBe('parsed_custom')
+})
+test('keeps two sampler stages independent and respects native LoRA selection', () => {
+  const staged = structuredClone(catalog)
+  const config = (staged.connections[0]!.metadata.comfyui_workflows as Workflow[])[0]!.config
+  Object.assign(config.workflow_api_json!, {
+    '4': { class_type: 'KSampler', inputs: { steps: 20 } },
+    '5': { class_type: 'KSampler', inputs: { steps: 8 } },
+    '6': { class_type: 'LoraLoader', inputs: { lora_name: 'embedded.safetensors' } },
+  })
+  config.field_mappings.push({ nodeId: '4', fieldName: 'steps', mappedAs: 'steps' }, { nodeId: '5', fieldName: 'steps', mappedAs: 'steps' }, { nodeId: '6', fieldName: 'lora_name', mappedAs: 'lora_name' })
+  const input = buildInput({ ...step(), bypassLoras: false, fields: { '4:steps': 24 } }, 'video', staged, { chatId: 'chat', jobId: 'job', sourceImageId: 'image' })
+  expect(input.parameters.comfyui_field_values.node_fields).toEqual({ '4:steps': 24, '5:steps': 8 })
+})
+test('rejects missing presets, workflows, image sources and stale dropdown choices', () => {
+  const context = { chatId: 'chat', jobId: 'job', sourceImageId: 'image' }
+  expect(() => buildInput({ ...step(), presetId: 'deleted' }, 'video', catalog, context)).toThrow('Preset')
+  expect(() => buildInput({ ...step(), workflowId: 'deleted' }, 'video', catalog, context)).toThrow('workflow')
+  expect(() => buildInput(step(), 'video', catalog, { ...context, sourceImageId: undefined })).toThrow('source image')
+  expect(() => buildInput({ ...step(), fields: { '3:model': 'missing' } }, 'video', catalog, context)).toThrow('available value')
+})
+test('custom controls expose typed defaults and stored choices', () => {
+  expect(fieldControls(workflow).map(({ key, value, options }) => ({ key, value, options }))).toEqual([
+    { key: '3:length', value: 81, options: [] }, { key: '3:model', value: 'small', options: ['small', 'large'] }, { key: '3:enabled', value: true, options: [] },
+  ])
+})
+test('a sequence waits for the image and passes its saved ID to video', async () => {
+  const calls: string[] = []
+  let finish!: (result: Result) => void
+  const image = new Promise<Result>((resolve) => { finish = resolve })
+  const result = executeSteps('sequence', async (kind, source) => {
+    calls.push(`${kind}:${source || ''}`)
+    if (kind === 'image') return image
+    return { imageId: 'video', mediaType: 'video', mimeType: 'video/mp4', mediaUrl: '/video', prompt: 'motion' }
+  })
+  expect(calls).toEqual(['image:'])
+  finish({ imageId: 'saved-image', mediaType: 'image', mimeType: 'image/png', mediaUrl: '/image', prompt: 'portrait' })
+  expect((await result).video?.imageId).toBe('video')
+  expect(calls).toEqual(['image:', 'video:saved-image'])
+})
+test('image failure prevents the video step', async () => {
+  const calls: string[] = []
+  await expect(executeSteps('sequence', async (kind) => { calls.push(kind); throw new Error('image failed') })).rejects.toThrow('image failed')
+  expect(calls).toEqual(['image'])
+})

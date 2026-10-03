@@ -1,0 +1,4 @@
+Lumiverse version: 1.2.4
+Base commit: d904145451d69d11e136722ce3deaeddfc40d05c
+Core patch is already applied in the current Lumiverse workspace.
+Check compatibility with git apply --check before applying elsewhere.
