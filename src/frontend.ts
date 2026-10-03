@@ -1,20 +1,20 @@
 import type { SpindleFrontendContext } from 'lumiverse-spindle-types'
-import { fieldControls, newRecipe, workflows, type Asset, type Catalog, type Job, type MediaKind, type Recipe, type Scalar, type Settings, type Step } from './model'
+import { fieldControls, workflows, type Asset, type Catalog, type Job, type MediaKind, type Scalar, type Settings, type Step } from './model'
 import { styles } from './styles'
 interface Bootstrap { supported: boolean; settings: Settings; catalog: Catalog | null; assets: Asset[]; job: Job | null }
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
 const uid = () => `qg-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
 
 export function setup(ctx: SpindleFrontendContext) {
-  const tab = ctx.ui.registerDrawerTab({ id: 'quickgen', title: 'QuickGen', shortName: 'QuickGen', description: 'ComfyUI recipes for images and video', keywords: ['image', 'video', 'comfyui', 'workflow', 'preset'], iconSvg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="m13 2-9 12h7l-1 8 10-13h-7l1-7Z"/></svg>' })
-  const action = ctx.ui.registerInputBarAction({ id: 'quickgen', label: 'QuickGen', subtitle: 'Image and video recipes' })
+  const tab = ctx.ui.registerDrawerTab({ id: 'quickgen', title: 'QuickGen', shortName: 'QuickGen', description: 'Run a saved ComfyUI workflow', keywords: ['image', 'video', 'comfyui', 'workflow', 'preset'], iconSvg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="m13 2-9 12h7l-1 8 10-13h-7l1-7Z"/></svg>' })
+  const action = ctx.ui.registerInputBarAction({ id: 'quickgen', label: 'QuickGen', subtitle: 'Run a saved workflow' })
   const offAction = action.onClick(() => tab.activate())
   const removeStyle = ctx.dom.addStyle(styles)
   const root = document.createElement('section')
   root.className = 'qg'
   tab.root.append(root)
   let state: Bootstrap | null = null
-  let draft: Recipe | null = null
+  let draft: Settings | null = null
   let statusRoot: HTMLElement
   let savedLabel: HTMLElement
   let error = ''
@@ -82,7 +82,7 @@ export function setup(ctx: SpindleFrontendContext) {
   async function save() {
     if (!draft || !state) return
     clearTimeout(saveTimer)
-    state.settings = await request<Settings>('qg_save', { recipe: clone(draft) })
+    state.settings = await request<Settings>('qg_save', { selection: clone(draft) })
     if (savedLabel) savedLabel.textContent = 'Saved'
   }
   function changed() {
@@ -90,16 +90,13 @@ export function setup(ctx: SpindleFrontendContext) {
     clearTimeout(saveTimer)
     saveTimer = setTimeout(() => { void save().catch(showError) }, 600)
   }
-  function renderStep(kind: MediaKind) {
-    const step = draft![kind]
+  function renderStep() {
+    const { kind, step } = draft!
     defaultSelection(step)
     const connection = state!.catalog?.connections.find((c) => c.id === step.connectionId)
     const list = workflows(connection)
     const workflow = list.find((w) => w.id === step.workflowId)
     const panel = el('section', '', 'qg-step')
-    const title = el('h3')
-    title.append(el('span', kind === 'image' ? '1' : '2', 'qg-number'), document.createTextNode(kind === 'image' ? 'Image step' : 'Video step'))
-    panel.append(title)
     const connections = state!.catalog?.connections ?? []
     panel.append(control('ComfyUI connection', select([{ value: '', label: 'Choose a connection' }, ...connections.map((c) => ({ value: c.id, label: c.name }))], step.connectionId, (value) => {
       step.connectionId = value; step.workflowId = ''; step.fields = {}; step.outputNodeId = ''; defaultSelection(step); changed(); render()
@@ -108,9 +105,11 @@ export function setup(ctx: SpindleFrontendContext) {
       step.workflowId = value; step.fields = {}; step.outputNodeId = ''; changed(); render()
     })))
     panel.append(control('Main Preset', select([{ value: '', label: 'Use active Main Preset' }, ...(state!.catalog?.presets ?? []).map((p) => ({ value: p.id, label: p.name }))], step.presetId, (value) => { step.presetId = value; changed() })))
-    const sourceItems = [{ value: 'none', label: kind === 'video' ? 'None · text to video' : 'None · text to image' }, { value: 'last', label: 'Previous QuickGen image' }, ...state!.assets.map((asset) => ({ value: asset.id, label: asset.original_filename || asset.id }))]
-    panel.append(control('Source image', select(sourceItems, step.source, (value) => { step.source = value; changed() })))
-    const controls = fieldControls(workflow).filter((field) => step.bypassLoras || !field.semantic.startsWith('lora_'))
+    panel.append(control('Output', select([{ value: 'image', label: 'Image' }, { value: 'video', label: 'Video' }], kind, (value) => { draft!.kind = value as MediaKind; changed(); render() })))
+    const sourceItems = [{ value: 'none', label: 'Use workflow image fields / no override' }, { value: 'last', label: 'Previous QuickGen image' }, ...state!.assets.map((asset) => ({ value: asset.id, label: asset.original_filename || asset.id }))]
+    panel.append(control('Source image override', select(sourceItems, step.source, (value) => { step.source = value; changed(); render() })))
+    if (step.source !== 'none') panel.append(el('small', 'The source image override replaces the workflow’s Load Image value.'))
+    const controls = fieldControls(workflow).filter((field) => (step.bypassLoras || !field.semantic.startsWith('lora_')))
     const fields = el('details')
     fields.open = true
     fields.append(el('summary', `Workflow fields · ${controls.length}`))
@@ -127,6 +126,7 @@ export function setup(ctx: SpindleFrontendContext) {
         const input = el('input'); input.type = typeof field.value === 'number' ? 'number' : 'text'; input.step = 'any'; input.value = String(value)
         input.onchange = () => update(typeof field.value === 'number' ? Number(input.value) : input.value); node = input
       }
+      if (field.semantic === 'init_image' && step.source !== 'none') (node as HTMLInputElement | HTMLSelectElement).disabled = true
       fields.append(control(field.label, node))
     }
     panel.append(fields)
@@ -145,12 +145,12 @@ export function setup(ctx: SpindleFrontendContext) {
     panel.append(advanced)
     return panel
   }
-  async function generate(mode: MediaKind | 'sequence') {
+  async function generate() {
     if (!draft || !state) return
     starting = true; error = ''; renderStatus()
     try {
       await save()
-      state.job = await request<Job>('qg_start', { recipe: clone(draft), mode, chatId: ctx.getActiveChat().chatId })
+      state.job = await request<Job>('qg_start', { selection: clone(draft), chatId: ctx.getActiveChat().chatId })
     } finally { starting = false; renderStatus() }
   }
   function renderStatus() {
@@ -160,14 +160,12 @@ export function setup(ctx: SpindleFrontendContext) {
     const busy = starting || job?.status === 'running' || job?.status === 'cancelling'
     tab.setBadge(busy ? '…' : null)
     const actions = el('div', '', 'qg-actions')
-    for (const [mode, label] of [['image', 'Generate image'], ['video', 'Generate video'], ['sequence', 'Run sequence']] as const) {
-      const node = button(label, () => generate(mode), mode === 'sequence' ? 'qg-primary' : '')
-      node.disabled = busy || !state?.supported || !state.catalog?.connections.length
-      actions.append(node)
-    }
+    const generateButton = button(`Generate ${draft?.kind ?? 'video'}`, generate, 'qg-primary')
+    generateButton.disabled = busy || !state?.supported || !state.catalog?.connections.length
+    actions.append(generateButton)
     if (busy && !starting) actions.append(button('Cancel', async () => { await request('qg_cancel') }, 'qg-danger'))
     statusRoot.append(actions)
-    const text = error || job?.error || (job ? `${job.recipeName} · ${job.status === 'running' ? `Generating ${job.phase}` : job.status}` : 'Choose your workflows and presets, then generate.')
+    const text = error || job?.error || (job ? `${job.recipeName} · ${job.status === 'running' ? `Generating ${job.phase}` : job.status}` : 'Choose a workflow and Main Preset, then generate.')
     const status = el('div', text, 'qg-status')
     status.setAttribute('role', error || job?.error ? 'alert' : 'status')
     status.setAttribute('aria-live', 'polite')
@@ -200,33 +198,23 @@ export function setup(ctx: SpindleFrontendContext) {
   function render() {
     if (disposed) return
     root.replaceChildren()
-    root.append(el('h2', 'QuickGen'), el('p', 'Saved ComfyUI workflows, Main Presets, and fields for each step. Run separately or generate an image followed by a video.'))
+    root.append(el('h2', 'QuickGen'), el('p', 'Choose an existing ComfyUI workflow, Main Preset, and field values. Generate one image or video at a time.'))
     if (!state || !draft) { root.append(el('p', error || 'Loading QuickGen…')); return }
     if (!state.supported) root.append(el('p', 'Apply the included Lumiverse core patch and restart to enable QuickGen.'))
     else if (!state.catalog) root.append(button('Grant generation permissions', async () => { await ctx.permissions.request(['image_gen', 'images']); await refresh() }))
     const toolbar = el('div', '', 'qg-toolbar')
-    toolbar.append(select(state.settings.recipes.map((r) => ({ value: r.id, label: r.name })), draft.id, (value) => {
-      void (async () => { await save(); state!.settings = await request<Settings>('qg_save', { selectedId: value }); draft = clone(state!.settings.recipes.find((r) => r.id === value)!); render() })().catch(showError)
-    }))
-    toolbar.append(button('New', async () => { await save(); draft = newRecipe(uid()); render(); changed() }), button('Duplicate', async () => { await save(); draft = { ...clone(draft!), id: uid(), name: `${draft!.name} copy` }; render(); changed() }), button('Delete', async () => {
-      const confirm = await ctx.ui.showConfirm({ title: 'Delete recipe', message: `Delete “${draft!.name}”? Generated assets are kept.`, variant: 'danger', confirmLabel: 'Delete recipe' })
-      if (!confirm.confirmed) return
-      clearTimeout(saveTimer); state!.settings = await request<Settings>('qg_save', { deleteId: draft!.id }); draft = clone(state!.settings.recipes.find((r) => r.id === state!.settings.selectedId)!); render()
-    }), button('Refresh', async () => { await save(); await refresh() }))
-    root.append(toolbar)
-    const name = el('input'); name.value = draft.name; name.onchange = () => { draft!.name = name.value; changed() }
-    root.append(control('Recipe name', name))
-    savedLabel = el('span', 'Saved', 'qg-saved'); root.append(savedLabel)
-    const grid = el('div', '', 'qg-grid'); grid.append(renderStep('image'), renderStep('video')); root.append(grid)
+    toolbar.append(button('Refresh', async () => { await save(); await refresh() }))
+    savedLabel = el('span', 'Selection remembered', 'qg-saved'); toolbar.append(savedLabel)
+    root.append(toolbar, renderStep())
     statusRoot = el('div'); root.append(statusRoot); renderStatus()
-    root.append(el('footer', 'Recipe choices are saved in QuickGen. “Use active” is captured when a run starts. ImgGen’s active selections stay unchanged.'))
+    root.append(el('footer', 'Your last selection is remembered in QuickGen. “Use active” is captured when a run starts. ImgGen’s active selections stay unchanged.'))
   }
   async function refresh() {
     error = ''
     const next = await request<Bootstrap>('qg_bootstrap')
     if (disposed) return
     state = next
-    draft = clone(state.settings.recipes.find((r) => r.id === state!.settings.selectedId) ?? state.settings.recipes[0]!)
+    draft = clone(state.settings)
     render()
   }
   const offChat = ctx.events.on('CHAT_SWITCHED', () => renderStatus())

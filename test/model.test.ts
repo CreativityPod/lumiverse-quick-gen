@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { buildInput, executeSteps, fieldControls, newRecipe, type Catalog, type Result, type Workflow } from '../src/model'
+import { buildInput, fieldControls, migrateSettings, newRecipe, type Catalog, type Workflow } from '../src/model'
 const workflow: Workflow = { id: 'w', name: 'Example', config: {
   workflow_api_json: {
     '1': { class_type: 'CLIPTextEncode', inputs: { text: 'prompt' } },
@@ -10,10 +10,10 @@ const workflow: Workflow = { id: 'w', name: 'Example', config: {
     { nodeId: '1', fieldName: 'text', mappedAs: 'positive_prompt' },
     { nodeId: '2', fieldName: 'image', mappedAs: 'init_image' },
     ...['length', 'model', 'enabled'].map((fieldName) => ({ nodeId: '3', fieldName, mappedAs: 'custom' })),
-  ], field_options: { '3:model': ['small', 'large'] },
+  ], field_options: { '2:image': ['default.png', 'portrait.png'], '3:model': ['small', 'large'] },
 } }
 const catalog: Catalog = { activeId: 'active', activeConnectionId: 'c', presets: [{ id: 'active', name: 'Main', mode: 'parsed_custom' }, { id: 'other', name: 'Motion', mode: 'custom' }], connections: [{ id: 'c', name: 'Comfy', provider: 'comfyui', metadata: { comfyui_workflows: [workflow] } }] }
-function step() { return { ...newRecipe('r').video, connectionId: 'c', workflowId: 'w' } }
+function step() { return { ...newRecipe('r').video, connectionId: 'c', workflowId: 'w', source: 'last' } }
 test('uses a selected preset and custom types without mutating defaults', () => {
   const before = JSON.stringify({ workflow, catalog })
   const input = buildInput({ ...step(), presetId: 'other', fields: { '3:length': 121, '3:enabled': false, '3:model': 'large' } }, 'video', catalog, { chatId: 'chat', jobId: 'job', sourceImageId: 'image' })
@@ -49,25 +49,30 @@ test('rejects missing presets, workflows, image sources and stale dropdown choic
 })
 test('custom controls expose typed defaults and stored choices', () => {
   expect(fieldControls(workflow).map(({ key, value, options }) => ({ key, value, options }))).toEqual([
+    { key: '2:image', value: 'default.png', options: ['default.png', 'portrait.png'] },
     { key: '3:length', value: 81, options: [] }, { key: '3:model', value: 'small', options: ['small', 'large'] }, { key: '3:enabled', value: true, options: [] },
   ])
 })
-test('a sequence waits for the image and passes its saved ID to video', async () => {
-  const calls: string[] = []
-  let finish!: (result: Result) => void
-  const image = new Promise<Result>((resolve) => { finish = resolve })
-  const result = executeSteps('sequence', async (kind, source) => {
-    calls.push(`${kind}:${source || ''}`)
-    if (kind === 'image') return image
-    return { imageId: 'video', mediaType: 'video', mimeType: 'video/mp4', mediaUrl: '/video', prompt: 'motion' }
-  })
-  expect(calls).toEqual(['image:'])
-  finish({ imageId: 'saved-image', mediaType: 'image', mimeType: 'image/png', mediaUrl: '/image', prompt: 'portrait' })
-  expect((await result).video?.imageId).toBe('video')
-  expect(calls).toEqual(['image:', 'video:saved-image'])
+test('LoadImage choices use ComfyUI filenames and an explicit source overrides them', () => {
+  const choice = { ...step(), source: 'none', fields: { '2:image': 'portrait.png' } }
+  const input = buildInput(choice, 'video', catalog, { chatId: 'chat', jobId: 'job' })
+  expect(input.parameters.comfyui_field_values.init_image).toBe('portrait.png')
+  expect(input.source_image_id).toBeUndefined()
+  const override = buildInput({ ...choice, source: 'last' }, 'video', catalog, { chatId: 'chat', jobId: 'job', sourceImageId: 'saved-image' })
+  expect(override.parameters.comfyui_field_values.init_image).toBeUndefined()
+  expect(override.source_image_id).toBe('saved-image')
 })
-test('image failure prevents the video step', async () => {
-  const calls: string[] = []
-  await expect(executeSteps('sequence', async (kind) => { calls.push(kind); throw new Error('image failed') })).rejects.toThrow('image failed')
-  expect(calls).toEqual(['image'])
+test('migrates the selected legacy recipe without deleting its other steps or recipes', () => {
+  const recipe = newRecipe('r')
+  recipe.image.connectionId = 'image-connection'
+  recipe.image.workflowId = 'image-workflow'
+  recipe.video = { ...step(), presetId: 'other', fields: { '3:length': 121 } }
+  const old = { recipes: [newRecipe('unused'), recipe], selectedId: 'r' }
+  const before = JSON.stringify(old)
+  const selection = migrateSettings(old)
+  expect(selection.kind).toBe('video')
+  expect(selection.step.fields['3:length']).toBe(121)
+  expect(selection.step.presetId).toBe('other')
+  expect(JSON.stringify(old)).toBe(before)
+  expect(migrateSettings(null).step.source).toBe('none')
 })

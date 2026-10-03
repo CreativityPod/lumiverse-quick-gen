@@ -1,4 +1,4 @@
-// QuickGen 0.1.0 — generated from src/.
+// QuickGen 0.1.1 — generated from src/.
 
 // src/model.ts
 var emptyStep = (kind) => ({
@@ -8,12 +8,11 @@ var emptyStep = (kind) => ({
   prompt: "",
   negativePrompt: "",
   fields: {},
-  source: kind === "video" ? "last" : "none",
+  source: "none",
   outputNodeId: "",
   bypassLoras: kind === "video",
   timeoutSeconds: kind === "video" ? 1800 : 300
 });
-var newRecipe = (id, name = "New recipe") => ({ id, name, image: emptyStep("image"), video: emptyStep("video") });
 function workflows(connection) {
   const entries = connection?.metadata.comfyui_workflows;
   if (Array.isArray(entries) && entries.length)
@@ -24,7 +23,7 @@ function workflows(connection) {
 function fieldControls(workflow) {
   if (!workflow)
     return [];
-  return workflow.config.field_mappings.filter((mapping) => !["positive_prompt", "negative_prompt", "init_image"].includes(mapping.mappedAs)).flatMap((mapping) => {
+  return workflow.config.field_mappings.filter((mapping) => !["positive_prompt", "negative_prompt"].includes(mapping.mappedAs)).flatMap((mapping) => {
     const node = workflow.config.workflow_api_json?.[mapping.nodeId];
     const value = node?.inputs[mapping.fieldName];
     if (!["string", "number", "boolean"].includes(typeof value))
@@ -77,6 +76,8 @@ function buildInput(step, kind, catalog, context) {
   for (const field of fieldControls(workflow)) {
     if (field.semantic.startsWith("lora_") && !step.bypassLoras)
       continue;
+    if (field.semantic === "init_image" && context.sourceImageId)
+      continue;
     const value = Object.hasOwn(step.fields, field.key) ? step.fields[field.key] : field.value;
     if (typeof value !== typeof field.value || typeof value === "number" && !Number.isFinite(value))
       throw new Error(`Invalid value for ${field.label}.`);
@@ -84,6 +85,8 @@ function buildInput(step, kind, catalog, context) {
       throw new Error(`Choose an available value for ${field.label}.`);
     if (field.semantic === "custom")
       patch.custom[field.key] = value;
+    else if (field.semantic === "init_image")
+      patch.init_image = value;
     else
       patch.node_fields[field.key] = value;
   }
@@ -106,33 +109,35 @@ function buildInput(step, kind, catalog, context) {
     parameters: { workflow_id: workflow.id === "__legacy__" ? undefined : workflow.id, comfyui_field_values: patch }
   };
 }
-async function executeSteps(mode, run, source) {
-  let image;
-  let video;
-  if (mode !== "video")
-    image = await run("image", source);
-  if (mode !== "image")
-    video = await run("video", image?.imageId ?? source);
-  return { image, video };
+function normalizeSettings(raw) {
+  const input = raw;
+  if (input?.kind !== "image" && input?.kind !== "video")
+    throw new Error("Choose image or video output.");
+  const recipe = normalizeRecipe({ id: "launcher", name: "QuickGen", [input.kind]: input.step });
+  return { kind: input.kind, step: recipe[input.kind] };
+}
+function migrateSettings(legacy) {
+  const recipe = legacy?.recipes.find((entry) => entry.id === legacy.selectedId) ?? legacy?.recipes[0];
+  const kind = recipe?.video.workflowId ? "video" : recipe?.image.workflowId ? "image" : "video";
+  return normalizeSettings({ kind, step: recipe?.[kind] ?? emptyStep(kind) });
 }
 
 // src/backend.ts
 var jobs = new Map;
 var locks = new Map;
 var activeIds = new Map;
-var STATE_PATH = "quickgen.json";
+var STATE_PATH = "selection.json";
 var LAST_PATH = "last-job.json";
 var supported = () => typeof spindle.imageGen.getPromptPresets === "function" && typeof spindle.imageGen.cancelNative === "function";
 function send(userId, payload) {
   spindle.sendToFrontend(payload, userId);
 }
 async function settings(userId) {
-  const stored = await spindle.userStorage.getJson(STATE_PATH, { userId, fallback: { recipes: [], selectedId: "" } });
-  if (!stored.recipes.length) {
-    const recipe = newRecipe("default", "Image → video");
-    return { recipes: [recipe], selectedId: recipe.id };
-  }
-  return stored;
+  const stored = await spindle.userStorage.getJson(STATE_PATH, { userId, fallback: null });
+  if (stored)
+    return normalizeSettings(stored);
+  const legacy = await spindle.userStorage.getJson("quickgen.json", { userId, fallback: null });
+  return migrateSettings(legacy);
 }
 function withSettings(userId, work) {
   const pending = (locks.get(userId) ?? Promise.resolve()).catch(() => {}).then(work);
@@ -166,68 +171,43 @@ async function lastJob(userId) {
   }
   return stored;
 }
-async function source(userId, recipe, kind, previous) {
-  const value = recipe[kind].source;
-  if (value === "none")
-    return;
-  if (value !== "last")
-    return value;
-  const image = (await lastJob(userId))?.image?.imageId;
-  const id = previous ?? image;
-  if (!id)
-    throw new Error("Generate an image first, or select an existing source image.");
-  return id;
-}
-async function start(userId, raw, chatId, mode) {
+async function start(userId, raw, chatId) {
   if (!spindle.permissions.has("image_gen"))
     throw new Error("Grant QuickGen the Image Generation permission in Spindle.");
   if (typeof chatId !== "string" || !chatId)
     throw new Error("Open a chat before generating.");
-  if (!["image", "video", "sequence"].includes(String(mode)))
-    throw new Error("Unknown generation mode.");
   if (jobs.get(userId)?.status === "running" || jobs.get(userId)?.status === "cancelling")
     throw new Error("Wait for the current QuickGen job or cancel it.");
-  const recipe = normalizeRecipe(raw);
+  const selection = normalizeSettings(raw);
+  const { kind, step } = selection;
   const previous = await lastJob(userId);
   if (jobs.get(userId)?.status === "running" || jobs.get(userId)?.status === "cancelling")
     throw new Error("QuickGen is already running.");
-  const job = { id: crypto.randomUUID(), chatId, recipeName: recipe.name, mode, phase: mode === "video" ? "video" : "image", status: "running", startedAt: Date.now(), image: mode === "video" ? previous?.image : undefined };
+  const job = { id: crypto.randomUUID(), chatId, recipeName: "QuickGen", mode: kind, phase: kind, status: "running", startedAt: Date.now(), image: kind === "video" ? previous?.image : undefined };
   jobs.set(userId, job);
+  const cancelled = () => job.status === "cancelling";
   try {
     const options = await catalog(userId);
-    const selectedSource = recipe[job.phase].source === "last" ? previous?.image?.imageId : recipe[job.phase].source === "none" ? undefined : recipe[job.phase].source;
-    buildInput(recipe[job.phase], job.phase, options, { chatId, jobId: job.id, sourceImageId: selectedSource });
-    if (mode === "sequence")
-      buildInput(recipe.video, "video", options, { chatId, jobId: job.id, sourceImageId: recipe.video.source === "none" ? undefined : recipe.video.source === "last" ? "__previous_image__" : recipe.video.source });
+    const selectedSource = step.source === "last" ? previous?.image?.imageId : step.source === "none" ? undefined : step.source;
+    const input = buildInput(step, kind, options, { chatId, jobId: `${job.id}:${kind}`, sourceImageId: selectedSource });
+    const connection = options.connections.find((entry) => entry.id === step.connectionId);
+    job.recipeName = connection?.name ?? "QuickGen";
     await spindle.userStorage.setJson(LAST_PATH, job, { userId });
     send(userId, { type: "qg_job", job });
     (async () => {
       try {
-        await executeSteps(job.mode, async (kind, previousImage) => {
-          if (job.status !== "running")
-            throw new Error("Generation cancelled");
-          job.phase = kind;
-          job.progress = undefined;
-          const id = `${job.id}:${kind}`;
-          activeIds.set(userId, id);
-          send(userId, { type: "qg_job", job });
-          const sourceImageId = await source(userId, recipe, kind, previousImage ?? selectedSource);
-          const input = buildInput(recipe[kind], kind, options, { chatId, jobId: id, sourceImageId });
-          if (job.status !== "running")
-            throw new Error("Generation cancelled");
-          const generated = await spindle.imageGen.generateNative({ ...input, userId });
-          if (!generated.generated || !generated.imageId)
-            throw new Error(generated.reason || "The workflow returned no saved output.");
-          const result = { imageId: generated.imageId, mediaUrl: generated.mediaUrl ?? generated.imageUrl, mediaType: generated.mediaType ?? kind, mimeType: generated.mimeType ?? (kind === "video" ? "video/mp4" : "image/png"), prompt: generated.prompt, jobId: generated.jobId };
-          job[kind] = result;
-          await spindle.userStorage.setJson(LAST_PATH, job, { userId });
-          send(userId, { type: "qg_job", job });
-          return result;
-        });
-        job.status = job.status === "cancelling" ? "cancelled" : "complete";
+        if (job.status !== "running")
+          throw new Error("Generation cancelled");
+        activeIds.set(userId, input.clientJobId);
+        const generated = await spindle.imageGen.generateNative({ ...input, userId });
+        if (!generated.generated || !generated.imageId)
+          throw new Error(generated.reason || "The workflow returned no saved output.");
+        const result = { imageId: generated.imageId, mediaUrl: generated.mediaUrl ?? generated.imageUrl, mediaType: generated.mediaType ?? kind, mimeType: generated.mimeType ?? (kind === "video" ? "video/mp4" : "image/png"), prompt: generated.prompt, jobId: generated.jobId };
+        job[kind] = result;
+        job.status = cancelled() ? "cancelled" : "complete";
       } catch (error) {
         job.error = error instanceof Error ? error.message : String(error);
-        job.status = job.status === "cancelling" ? "cancelled" : "failed";
+        job.status = cancelled() ? "cancelled" : "failed";
       } finally {
         activeIds.delete(userId);
         await spindle.userStorage.setJson(LAST_PATH, job, { userId });
@@ -254,26 +234,13 @@ spindle.onFrontendMessage(async (payload, userId) => {
         break;
       case "qg_save":
         result = await withSettings(userId, async () => {
-          const state = await settings(userId);
-          if (message.recipe) {
-            const recipe = normalizeRecipe(message.recipe);
-            state.recipes = [...state.recipes.filter((r) => r.id !== recipe.id), recipe];
-            state.selectedId = recipe.id;
-          }
-          if (message.deleteId)
-            state.recipes = state.recipes.filter((r) => r.id !== message.deleteId);
-          if (message.selectedId && state.recipes.some((r) => r.id === message.selectedId))
-            state.selectedId = message.selectedId;
-          if (!state.recipes.length)
-            state.recipes.push(newRecipe("default", "Image → video"));
-          if (!state.recipes.some((r) => r.id === state.selectedId))
-            state.selectedId = state.recipes[0].id;
+          const state = normalizeSettings(message.selection);
           await spindle.userStorage.setJson(STATE_PATH, state, { userId });
           return state;
         });
         break;
       case "qg_start":
-        result = await start(userId, message.recipe, message.chatId, message.mode);
+        result = await start(userId, message.selection, message.chatId);
         break;
       case "qg_cancel": {
         const job = jobs.get(userId);

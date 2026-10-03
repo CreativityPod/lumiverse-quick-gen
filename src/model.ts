@@ -16,7 +16,8 @@ export interface Step {
   source: string; outputNodeId: string; bypassLoras: boolean; timeoutSeconds: number
 }
 export interface Recipe { id: string; name: string; image: Step; video: Step }
-export interface Settings { recipes: Recipe[]; selectedId: string }
+export interface LegacySettings { recipes: Recipe[]; selectedId: string }
+export interface Settings { kind: MediaKind; step: Step }
 export interface Asset { id: string; url: string; mime_type: string; original_filename: string; owner_chat_id?: string | null }
 export interface Result { imageId: string; mediaUrl: string; mediaType: MediaKind; mimeType: string; prompt: string; jobId?: string }
 export interface Job {
@@ -28,7 +29,7 @@ export interface Job {
 export interface FieldControl { key: string; semantic: string; label: string; value: Scalar; options: string[] }
 export const emptyStep = (kind: MediaKind): Step => ({
   connectionId: '', workflowId: '', presetId: '', prompt: '', negativePrompt: '', fields: {},
-  source: kind === 'video' ? 'last' : 'none', outputNodeId: '', bypassLoras: kind === 'video', timeoutSeconds: kind === 'video' ? 1800 : 300,
+  source: 'none', outputNodeId: '', bypassLoras: kind === 'video', timeoutSeconds: kind === 'video' ? 1800 : 300,
 })
 export const newRecipe = (id: string, name = 'New recipe'): Recipe => ({ id, name, image: emptyStep('image'), video: emptyStep('video') })
 
@@ -41,7 +42,7 @@ export function workflows(connection?: Connection): Workflow[] {
 
 export function fieldControls(workflow?: Workflow): FieldControl[] {
   if (!workflow) return []
-  return workflow.config.field_mappings.filter((mapping) => !['positive_prompt', 'negative_prompt', 'init_image'].includes(mapping.mappedAs)).flatMap((mapping) => {
+  return workflow.config.field_mappings.filter((mapping) => !['positive_prompt', 'negative_prompt'].includes(mapping.mappedAs)).flatMap((mapping) => {
     const node = workflow.config.workflow_api_json?.[mapping.nodeId]
     const value = node?.inputs[mapping.fieldName]
     if (!['string', 'number', 'boolean'].includes(typeof value)) return []
@@ -84,10 +85,12 @@ export function buildInput(step: Step, kind: MediaKind, catalog: Catalog, contex
   const patch: Record<string, unknown> = { custom: {}, node_fields: {} }
   for (const field of fieldControls(workflow)) {
     if (field.semantic.startsWith('lora_') && !step.bypassLoras) continue
+    if (field.semantic === 'init_image' && context.sourceImageId) continue
     const value = Object.hasOwn(step.fields, field.key) ? step.fields[field.key]! : field.value
     if (typeof value !== typeof field.value || (typeof value === 'number' && !Number.isFinite(value))) throw new Error(`Invalid value for ${field.label}.`)
     if (field.options.length && !field.options.includes(String(value))) throw new Error(`Choose an available value for ${field.label}.`)
     if (field.semantic === 'custom') (patch.custom as Record<string, Scalar>)[field.key] = value
+    else if (field.semantic === 'init_image') patch.init_image = value
     else (patch.node_fields as Record<string, Scalar>)[field.key] = value
   }
   return {
@@ -104,10 +107,15 @@ export function buildInput(step: Step, kind: MediaKind, catalog: Catalog, contex
   }
 }
 
-export async function executeSteps(mode: MediaKind | 'sequence', run: (kind: MediaKind, source?: string) => Promise<Result>, source?: string) {
-  let image: Result | undefined
-  let video: Result | undefined
-  if (mode !== 'video') image = await run('image', source)
-  if (mode !== 'image') video = await run('video', image?.imageId ?? source)
-  return { image, video }
+export function normalizeSettings(raw: unknown): Settings {
+  const input = raw as Partial<Settings> | null
+  if (input?.kind !== 'image' && input?.kind !== 'video') throw new Error('Choose image or video output.')
+  const recipe = normalizeRecipe({ id: 'launcher', name: 'QuickGen', [input.kind]: input.step })
+  return { kind: input.kind, step: recipe[input.kind] }
+}
+
+export function migrateSettings(legacy?: LegacySettings | null): Settings {
+  const recipe = legacy?.recipes.find((entry) => entry.id === legacy.selectedId) ?? legacy?.recipes[0]
+  const kind = recipe?.video.workflowId ? 'video' : recipe?.image.workflowId ? 'image' : 'video'
+  return normalizeSettings({ kind, step: recipe?.[kind] ?? emptyStep(kind) })
 }

@@ -1,19 +1,6 @@
-// QuickGen 0.1.0 — generated from src/.
+// QuickGen 0.1.1 — generated from src/.
 
 // src/model.ts
-var emptyStep = (kind) => ({
-  connectionId: "",
-  workflowId: "",
-  presetId: "",
-  prompt: "",
-  negativePrompt: "",
-  fields: {},
-  source: kind === "video" ? "last" : "none",
-  outputNodeId: "",
-  bypassLoras: kind === "video",
-  timeoutSeconds: kind === "video" ? 1800 : 300
-});
-var newRecipe = (id, name = "New recipe") => ({ id, name, image: emptyStep("image"), video: emptyStep("video") });
 function workflows(connection) {
   const entries = connection?.metadata.comfyui_workflows;
   if (Array.isArray(entries) && entries.length)
@@ -24,7 +11,7 @@ function workflows(connection) {
 function fieldControls(workflow) {
   if (!workflow)
     return [];
-  return workflow.config.field_mappings.filter((mapping) => !["positive_prompt", "negative_prompt", "init_image"].includes(mapping.mappedAs)).flatMap((mapping) => {
+  return workflow.config.field_mappings.filter((mapping) => !["positive_prompt", "negative_prompt"].includes(mapping.mappedAs)).flatMap((mapping) => {
     const node = workflow.config.workflow_api_json?.[mapping.nodeId];
     const value = node?.inputs[mapping.fieldName];
     if (!["string", "number", "boolean"].includes(typeof value))
@@ -36,30 +23,30 @@ function fieldControls(workflow) {
 
 // src/styles.ts
 var styles = `
-.qg { --qg-border:var(--lumiverse-border,rgba(160,174,195,.23)); --qg-muted:var(--lumiverse-text-muted,#9aa6b8); color:var(--lumiverse-text,#e8edf5); font:inherit; padding:16px; box-sizing:border-box; max-width:900px; margin:auto; }
+.qg { --qg-border:var(--lumiverse-border,rgba(160,174,195,.23)); --qg-muted:var(--lumiverse-text-muted,#9aa6b8); color:var(--lumiverse-text,#e8edf5); font:inherit; padding:16px; box-sizing:border-box; max-width:640px; margin:auto; }
 .qg * {box-sizing:border-box} .qg h2 {font-size:18px; margin:0 0 6px} .qg p {margin:0 0 16px; color:var(--qg-muted); font-size:12px; line-height:1.6}
 .qg-toolbar,.qg-actions {display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:14px} .qg-toolbar select {flex:1; min-width:150px}
 .qg button,.qg input,.qg select,.qg textarea {font:inherit; color:inherit; background:var(--lumiverse-fill,#202a39); border:1px solid var(--qg-border); border-radius:7px; padding:9px 10px; min-height:36px}
 .qg input:not([type=checkbox]),.qg select,.qg textarea {width:100%; min-width:0} .qg textarea {min-height:72px; resize:vertical} .qg input[type=checkbox] {accent-color:#62bdce; min-height:0}
 .qg button {cursor:pointer; font-size:12px; white-space:nowrap} .qg button:hover {border-color:#62bdce} .qg button:disabled {opacity:.5; cursor:default}
 .qg button.qg-primary {background:var(--lumiverse-primary,#237d8e); color:white; border-color:transparent} .qg button.qg-danger {color:#f6a6a6}
-.qg-grid {display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; margin:16px 0} .qg-step {border:1px solid var(--qg-border); border-radius:10px; padding:14px; background:var(--lumiverse-fill-subtle,rgba(255,255,255,.025))}
-.qg-step h3 {font-size:14px; margin:0 0 16px; display:flex; align-items:center; gap:8px} .qg-number {border-radius:50%; width:23px; height:23px; display:inline-grid; place-items:center; background:rgba(98,189,206,.14); color:#80ccda; font-size:12px}
+.qg-step {border:1px solid var(--qg-border); border-radius:10px; padding:14px; background:var(--lumiverse-fill-subtle,rgba(255,255,255,.025))}
+
 .qg label {display:block; font-size:12px; margin:0 0 12px} .qg label>span {display:block; margin-bottom:6px; color:var(--qg-muted)} .qg small {font-size:11px; color:var(--qg-muted)}
 .qg details {border-top:1px solid var(--qg-border); padding-top:12px; margin-top:12px} .qg summary {font-size:12px; cursor:pointer; margin-bottom:12px} .qg .qg-check {display:flex; gap:8px; align-items:center}
 .qg-status {border:1px solid var(--qg-border); border-radius:10px; padding:12px; margin-top:12px; font-size:12px; line-height:1.6} .qg-status[role=alert] {color:#f6a6a6; border-color:rgba(230,110,110,.4)}
 .qg progress {width:100%; height:6px; accent-color:#62bdce; margin-top:8px} .qg-results {display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; margin-top:14px}
 .qg-results figure {margin:0; overflow:hidden; border:1px solid var(--qg-border); border-radius:10px} .qg-results img,.qg-results video {width:100%; max-height:360px; object-fit:contain; display:block; background:rgba(0,0,0,.2)} .qg-results figcaption {padding:10px; font-size:12px}
 .qg a {color:#80ccda} .qg footer {margin-top:16px; color:var(--qg-muted); font-size:11px} .qg .qg-saved {color:var(--qg-muted); font-size:11px}
-@media(max-width:700px) {.qg-grid{grid-template-columns:1fr}.qg{padding:12px}}
+@media(max-width:700px) {.qg{padding:12px}}
 `;
 
 // src/frontend.ts
 var clone = (value) => JSON.parse(JSON.stringify(value));
 var uid = () => `qg-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 function setup(ctx) {
-  const tab = ctx.ui.registerDrawerTab({ id: "quickgen", title: "QuickGen", shortName: "QuickGen", description: "ComfyUI recipes for images and video", keywords: ["image", "video", "comfyui", "workflow", "preset"], iconSvg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="m13 2-9 12h7l-1 8 10-13h-7l1-7Z"/></svg>' });
-  const action = ctx.ui.registerInputBarAction({ id: "quickgen", label: "QuickGen", subtitle: "Image and video recipes" });
+  const tab = ctx.ui.registerDrawerTab({ id: "quickgen", title: "QuickGen", shortName: "QuickGen", description: "Run a saved ComfyUI workflow", keywords: ["image", "video", "comfyui", "workflow", "preset"], iconSvg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="m13 2-9 12h7l-1 8 10-13h-7l1-7Z"/></svg>' });
+  const action = ctx.ui.registerInputBarAction({ id: "quickgen", label: "QuickGen", subtitle: "Run a saved workflow" });
   const offAction = action.onClick(() => tab.activate());
   const removeStyle = ctx.dom.addStyle(styles);
   const root = document.createElement("section");
@@ -157,7 +144,7 @@ function setup(ctx) {
     if (!draft || !state)
       return;
     clearTimeout(saveTimer);
-    state.settings = await request("qg_save", { recipe: clone(draft) });
+    state.settings = await request("qg_save", { selection: clone(draft) });
     if (savedLabel)
       savedLabel.textContent = "Saved";
   }
@@ -169,16 +156,13 @@ function setup(ctx) {
       save().catch(showError);
     }, 600);
   }
-  function renderStep(kind) {
-    const step = draft[kind];
+  function renderStep() {
+    const { kind, step } = draft;
     defaultSelection(step);
     const connection = state.catalog?.connections.find((c) => c.id === step.connectionId);
     const list = workflows(connection);
     const workflow = list.find((w) => w.id === step.workflowId);
     const panel = el("section", "", "qg-step");
-    const title = el("h3");
-    title.append(el("span", kind === "image" ? "1" : "2", "qg-number"), document.createTextNode(kind === "image" ? "Image step" : "Video step"));
-    panel.append(title);
     const connections = state.catalog?.connections ?? [];
     panel.append(control("ComfyUI connection", select([{ value: "", label: "Choose a connection" }, ...connections.map((c) => ({ value: c.id, label: c.name }))], step.connectionId, (value) => {
       step.connectionId = value;
@@ -200,11 +184,19 @@ function setup(ctx) {
       step.presetId = value;
       changed();
     })));
-    const sourceItems = [{ value: "none", label: kind === "video" ? "None · text to video" : "None · text to image" }, { value: "last", label: "Previous QuickGen image" }, ...state.assets.map((asset) => ({ value: asset.id, label: asset.original_filename || asset.id }))];
-    panel.append(control("Source image", select(sourceItems, step.source, (value) => {
+    panel.append(control("Output", select([{ value: "image", label: "Image" }, { value: "video", label: "Video" }], kind, (value) => {
+      draft.kind = value;
+      changed();
+      render();
+    })));
+    const sourceItems = [{ value: "none", label: "Use workflow image fields / no override" }, { value: "last", label: "Previous QuickGen image" }, ...state.assets.map((asset) => ({ value: asset.id, label: asset.original_filename || asset.id }))];
+    panel.append(control("Source image override", select(sourceItems, step.source, (value) => {
       step.source = value;
       changed();
+      render();
     })));
+    if (step.source !== "none")
+      panel.append(el("small", "The source image override replaces the workflow’s Load Image value."));
     const controls = fieldControls(workflow).filter((field) => step.bypassLoras || !field.semantic.startsWith("lora_"));
     const fields = el("details");
     fields.open = true;
@@ -234,6 +226,8 @@ function setup(ctx) {
         input.onchange = () => update(typeof field.value === "number" ? Number(input.value) : input.value);
         node = input;
       }
+      if (field.semantic === "init_image" && step.source !== "none")
+        node.disabled = true;
       fields.append(control(field.label, node));
     }
     panel.append(fields);
@@ -277,7 +271,7 @@ function setup(ctx) {
     panel.append(advanced);
     return panel;
   }
-  async function generate(mode) {
+  async function generate() {
     if (!draft || !state)
       return;
     starting = true;
@@ -285,7 +279,7 @@ function setup(ctx) {
     renderStatus();
     try {
       await save();
-      state.job = await request("qg_start", { recipe: clone(draft), mode, chatId: ctx.getActiveChat().chatId });
+      state.job = await request("qg_start", { selection: clone(draft), chatId: ctx.getActiveChat().chatId });
     } finally {
       starting = false;
       renderStatus();
@@ -299,17 +293,15 @@ function setup(ctx) {
     const busy = starting || job?.status === "running" || job?.status === "cancelling";
     tab.setBadge(busy ? "…" : null);
     const actions = el("div", "", "qg-actions");
-    for (const [mode, label] of [["image", "Generate image"], ["video", "Generate video"], ["sequence", "Run sequence"]]) {
-      const node = button(label, () => generate(mode), mode === "sequence" ? "qg-primary" : "");
-      node.disabled = busy || !state?.supported || !state.catalog?.connections.length;
-      actions.append(node);
-    }
+    const generateButton = button(`Generate ${draft?.kind ?? "video"}`, generate, "qg-primary");
+    generateButton.disabled = busy || !state?.supported || !state.catalog?.connections.length;
+    actions.append(generateButton);
     if (busy && !starting)
       actions.append(button("Cancel", async () => {
         await request("qg_cancel");
       }, "qg-danger"));
     statusRoot.append(actions);
-    const text = error || job?.error || (job ? `${job.recipeName} · ${job.status === "running" ? `Generating ${job.phase}` : job.status}` : "Choose your workflows and presets, then generate.");
+    const text = error || job?.error || (job ? `${job.recipeName} · ${job.status === "running" ? `Generating ${job.phase}` : job.status}` : "Choose a workflow and Main Preset, then generate.");
     const status = el("div", text, "qg-status");
     status.setAttribute("role", error || job?.error ? "alert" : "status");
     status.setAttribute("aria-live", "polite");
@@ -359,7 +351,7 @@ function setup(ctx) {
     if (disposed)
       return;
     root.replaceChildren();
-    root.append(el("h2", "QuickGen"), el("p", "Saved ComfyUI workflows, Main Presets, and fields for each step. Run separately or generate an image followed by a video."));
+    root.append(el("h2", "QuickGen"), el("p", "Choose an existing ComfyUI workflow, Main Preset, and field values. Generate one image or video at a time."));
     if (!state || !draft) {
       root.append(el("p", error || "Loading QuickGen…"));
       return;
@@ -372,53 +364,17 @@ function setup(ctx) {
         await refresh();
       }));
     const toolbar = el("div", "", "qg-toolbar");
-    toolbar.append(select(state.settings.recipes.map((r) => ({ value: r.id, label: r.name })), draft.id, (value) => {
-      (async () => {
-        await save();
-        state.settings = await request("qg_save", { selectedId: value });
-        draft = clone(state.settings.recipes.find((r) => r.id === value));
-        render();
-      })().catch(showError);
-    }));
-    toolbar.append(button("New", async () => {
-      await save();
-      draft = newRecipe(uid());
-      render();
-      changed();
-    }), button("Duplicate", async () => {
-      await save();
-      draft = { ...clone(draft), id: uid(), name: `${draft.name} copy` };
-      render();
-      changed();
-    }), button("Delete", async () => {
-      const confirm = await ctx.ui.showConfirm({ title: "Delete recipe", message: `Delete “${draft.name}”? Generated assets are kept.`, variant: "danger", confirmLabel: "Delete recipe" });
-      if (!confirm.confirmed)
-        return;
-      clearTimeout(saveTimer);
-      state.settings = await request("qg_save", { deleteId: draft.id });
-      draft = clone(state.settings.recipes.find((r) => r.id === state.settings.selectedId));
-      render();
-    }), button("Refresh", async () => {
+    toolbar.append(button("Refresh", async () => {
       await save();
       await refresh();
     }));
-    root.append(toolbar);
-    const name = el("input");
-    name.value = draft.name;
-    name.onchange = () => {
-      draft.name = name.value;
-      changed();
-    };
-    root.append(control("Recipe name", name));
-    savedLabel = el("span", "Saved", "qg-saved");
-    root.append(savedLabel);
-    const grid = el("div", "", "qg-grid");
-    grid.append(renderStep("image"), renderStep("video"));
-    root.append(grid);
+    savedLabel = el("span", "Selection remembered", "qg-saved");
+    toolbar.append(savedLabel);
+    root.append(toolbar, renderStep());
     statusRoot = el("div");
     root.append(statusRoot);
     renderStatus();
-    root.append(el("footer", "Recipe choices are saved in QuickGen. “Use active” is captured when a run starts. ImgGen’s active selections stay unchanged."));
+    root.append(el("footer", "Your last selection is remembered in QuickGen. “Use active” is captured when a run starts. ImgGen’s active selections stay unchanged."));
   }
   async function refresh() {
     error = "";
@@ -426,7 +382,7 @@ function setup(ctx) {
     if (disposed)
       return;
     state = next;
-    draft = clone(state.settings.recipes.find((r) => r.id === state.settings.selectedId) ?? state.settings.recipes[0]);
+    draft = clone(state.settings);
     render();
   }
   const offChat = ctx.events.on("CHAT_SWITCHED", () => renderStatus());

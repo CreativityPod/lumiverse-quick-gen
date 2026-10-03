@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test'
-import { newRecipe } from '../src/model'
-test('backend persists recipes, runs sequentially, and retries video with the saved image', async () => {
+import { emptyStep } from '../src/model'
+test('backend runs one selected workflow and can reuse an image for a later video run', async () => {
   const storage = new Map<string, unknown>()
   const messages: any[] = []
   const calls: any[] = []
@@ -32,12 +32,15 @@ test('backend persists recipes, runs sequentially, and retries video with the sa
     on: () => {}, log: { info: () => {}, error: () => {} },
   }
   await import('../src/backend')
-  const recipe = newRecipe('r')
-  recipe.image.connectionId = recipe.video.connectionId = 'conn'
-  recipe.image.workflowId = recipe.video.workflowId = 'wf'
-  await frontend({ type: 'qg_save', requestId: 'save', recipe }, 'alice')
-  expect(storage.has('alice:quickgen.json')).toBe(true)
-  await frontend({ type: 'qg_start', requestId: 'start', recipe, chatId: 'chat', mode: 'sequence' }, 'alice')
+  const step = { ...emptyStep('image'), connectionId: 'conn', workflowId: 'wf' }
+  const imageSelection = { kind: 'image', step }
+  await frontend({ type: 'qg_save', requestId: 'save', selection: imageSelection }, 'alice')
+  expect(storage.has('alice:selection.json')).toBe(true)
+  await frontend({ type: 'qg_start', requestId: 'image', selection: imageSelection, chatId: 'chat' }, 'alice')
+  for (let i = 0; i < 50 && messages.at(-1)?.job?.status !== 'complete'; i++) await Bun.sleep(1)
+  expect(calls.map((input) => input.output_media_type)).toEqual(['image'])
+  const videoSelection = { kind: 'video', step: { ...step, source: 'last' } }
+  await frontend({ type: 'qg_start', requestId: 'video', selection: videoSelection, chatId: 'chat' }, 'alice')
   for (let i = 0; i < 50 && messages.at(-1)?.job?.status !== 'failed'; i++) await Bun.sleep(1)
   const failed = messages.filter((message) => message.type === 'qg_job').at(-1).job
   expect(failed.status).toBe('failed')
@@ -46,7 +49,7 @@ test('backend persists recipes, runs sequentially, and retries video with the sa
   expect(calls[1].source_image_id).toBe('image-id')
   expect(calls.every((input) => input.userId === 'alice')).toBe(true)
   failVideo = false
-  await frontend({ type: 'qg_start', requestId: 'retry', recipe, chatId: 'chat', mode: 'video' }, 'alice')
+  await frontend({ type: 'qg_start', requestId: 'retry', selection: videoSelection, chatId: 'chat' }, 'alice')
   for (let i = 0; i < 50 && messages.at(-1)?.job?.status !== 'complete'; i++) await Bun.sleep(1)
   expect(calls).toHaveLength(3)
   expect(calls[2].source_image_id).toBe('image-id')
