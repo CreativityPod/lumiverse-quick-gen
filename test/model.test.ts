@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { buildInput, fieldControls, migrateSettings, newRecipe, type Catalog, type Workflow } from '../src/model'
+import { buildInput, fieldControls, migrateSettings, newRecipe, supportsSourceImage, type Catalog, type Workflow } from '../src/model'
 const workflow: Workflow = { id: 'w', name: 'Example', config: {
   workflow_api_json: {
     '1': { class_type: 'CLIPTextEncode', inputs: { text: 'prompt' } },
@@ -9,6 +9,7 @@ const workflow: Workflow = { id: 'w', name: 'Example', config: {
   field_mappings: [
     { nodeId: '1', fieldName: 'text', mappedAs: 'positive_prompt' },
     { nodeId: '2', fieldName: 'image', mappedAs: 'init_image' },
+    { nodeId: '2', fieldName: 'image', mappedAs: 'custom' },
     ...['length', 'model', 'enabled'].map((fieldName) => ({ nodeId: '3', fieldName, mappedAs: 'custom' })),
   ], field_options: { '2:image': ['default.png', 'portrait.png'], '3:model': ['small', 'large'] },
 } }
@@ -105,4 +106,32 @@ test('retains separate workflow nodes even when their titles and input names mat
   copy.config.workflow_api_json!['4'] = structuredClone(copy.config.workflow_api_json!['2']!)
   copy.config.field_mappings.push({ nodeId: '4', fieldName: 'image', mappedAs: 'custom' })
   expect(fieldControls(copy).filter((field) => field.key.endsWith(':image')).map((field) => field.key)).toEqual(['2:image', '4:image'])
+})
+
+test.each([
+  { initial: false, custom: false },
+  { initial: true, custom: false },
+  { initial: false, custom: true },
+  { initial: true, custom: true },
+])('source overrides and path editors follow their own saved mappings: %j', ({ initial, custom }) => {
+  const copy = structuredClone(catalog)
+  const selected = (copy.connections[0]!.metadata.comfyui_workflows as Workflow[])[0]!
+  selected.config.field_mappings = [
+    { nodeId: '1', fieldName: 'text', mappedAs: 'positive_prompt' },
+    ...(initial ? [{ nodeId: '2', fieldName: 'image', mappedAs: 'init_image' }] : []),
+    ...(custom ? [{ nodeId: '2', fieldName: 'image', mappedAs: 'custom' }] : []),
+  ]
+  expect(supportsSourceImage(selected)).toBe(initial)
+  expect(fieldControls(selected).filter((field) => field.key === '2:image')).toHaveLength(custom ? 1 : 0)
+  // Stale selections from another workflow must not upload to an unmapped one.
+  const input = buildInput({ ...step(), fields: { '2:image': 'portrait.png' } }, 'video', copy, { chatId: 'chat', jobId: 'job', sourceImageId: 'old-asset' })
+  expect(input.source_image_id).toBe(initial ? 'old-asset' : undefined)
+  expect(input.parameters.comfyui_field_values.init_image).toBeUndefined()
+  expect(input.parameters.comfyui_field_values.custom).toEqual(custom && !initial ? { '2:image': 'portrait.png' } : {})
+  if (!initial) expect(() => buildInput(step(), 'video', copy, { chatId: 'chat', jobId: 'job' })).not.toThrow()
+})
+test('a missing target node or input does not enable source image override', () => {
+  const copy = structuredClone(workflow)
+  copy.config.field_mappings = [{ nodeId: 'missing', fieldName: 'image', mappedAs: 'init_image' }, { nodeId: '2', fieldName: 'missing', mappedAs: 'init_image' }]
+  expect(supportsSourceImage(copy)).toBe(false)
 })

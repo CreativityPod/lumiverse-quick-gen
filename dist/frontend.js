@@ -1,4 +1,4 @@
-// QuickGen 0.1.2 — generated from src/.
+// QuickGen 0.1.3 — generated from src/.
 
 // src/model.ts
 function workflows(connection) {
@@ -8,9 +8,16 @@ function workflows(connection) {
   const config = connection?.metadata.comfyui;
   return config?.workflow_api_json ? [{ id: "__legacy__", name: "Imported workflow", config }] : [];
 }
+function supportsSourceImage(workflow) {
+  return workflow?.config.field_mappings.some((mapping) => {
+    const node = workflow.config.workflow_api_json?.[mapping.nodeId];
+    return mapping.mappedAs === "init_image" && !!node?.inputs && Object.hasOwn(node.inputs, mapping.fieldName);
+  }) ?? false;
+}
 function fieldControls(workflow) {
   if (!workflow)
     return [];
+  const customKeys = new Set(workflow.config.field_mappings.filter((mapping) => mapping.mappedAs === "custom").map((mapping) => `${mapping.nodeId}:${mapping.fieldName}`));
   const unique = new Map;
   for (const mapping of workflow.config.field_mappings) {
     const key = `${mapping.nodeId}:${mapping.fieldName}`;
@@ -19,6 +26,8 @@ function fieldControls(workflow) {
       unique.set(key, mapping);
   }
   return [...unique.values()].filter((mapping) => !["positive_prompt", "negative_prompt"].includes(mapping.mappedAs)).flatMap((mapping) => {
+    if (mapping.mappedAs === "init_image" && !customKeys.has(`${mapping.nodeId}:${mapping.fieldName}`))
+      return [];
     const node = workflow.config.workflow_api_json?.[mapping.nodeId];
     const value = node?.inputs[mapping.fieldName];
     if (!["string", "number", "boolean"].includes(typeof value))
@@ -169,6 +178,9 @@ function setup(ctx) {
     const connection = state.catalog?.connections.find((c) => c.id === step.connectionId);
     const list = workflows(connection);
     const workflow = list.find((w) => w.id === step.workflowId);
+    const acceptsSource = supportsSourceImage(workflow);
+    if (!acceptsSource)
+      step.source = "none";
     const panel = el("section", "", "qg-step");
     const connections = state.catalog?.connections ?? [];
     panel.append(control("ComfyUI connection", select([{ value: "", label: "Choose a connection" }, ...connections.map((c) => ({ value: c.id, label: c.name }))], step.connectionId, (value) => {
@@ -196,14 +208,16 @@ function setup(ctx) {
       changed();
       render();
     })));
-    const sourceItems = [{ value: "none", label: "Use workflow image fields / no override" }, { value: "last", label: "Previous QuickGen image" }, ...state.assets.map((asset) => ({ value: asset.id, label: asset.original_filename || asset.id }))];
-    panel.append(control("Source image override", select(sourceItems, step.source, (value) => {
-      step.source = value;
-      changed();
-      render();
-    })));
-    if (step.source !== "none")
-      panel.append(el("small", "The source image override replaces the workflow’s Load Image value."));
+    if (acceptsSource) {
+      const sourceItems = [{ value: "none", label: "Use workflow image fields / no override" }, { value: "last", label: "Previous QuickGen image" }, ...state.assets.map((asset) => ({ value: asset.id, label: asset.original_filename || asset.id }))];
+      panel.append(control("Source image override", select(sourceItems, step.source, (value) => {
+        step.source = value;
+        changed();
+        render();
+      })));
+      if (step.source !== "none")
+        panel.append(el("small", "The source image override replaces the workflow’s Load Image value."));
+    }
     const controls = fieldControls(workflow).filter((field) => step.bypassLoras || !field.semantic.startsWith("lora_"));
     const fields = el("details");
     fields.open = true;

@@ -40,10 +40,18 @@ export function workflows(connection?: Connection): Workflow[] {
   return config?.workflow_api_json ? [{ id: '__legacy__', name: 'Imported workflow', config }] : []
 }
 
+export function supportsSourceImage(workflow?: Workflow): boolean {
+  return workflow?.config.field_mappings.some((mapping) => {
+    const node = workflow.config.workflow_api_json?.[mapping.nodeId]
+    return mapping.mappedAs === 'init_image' && !!node?.inputs && Object.hasOwn(node.inputs, mapping.fieldName)
+  }) ?? false
+}
+
 export function fieldControls(workflow?: Workflow): FieldControl[] {
   if (!workflow) return []
   // ImgGen permits a node input to be mapped both to a standard role and as
   // a custom field. Render it once, retaining the standard injection behavior.
+  const customKeys = new Set(workflow.config.field_mappings.filter((mapping) => mapping.mappedAs === 'custom').map((mapping) => `${mapping.nodeId}:${mapping.fieldName}`))
   const unique = new Map<string, Mapping>()
   for (const mapping of workflow.config.field_mappings) {
     const key = `${mapping.nodeId}:${mapping.fieldName}`
@@ -51,6 +59,9 @@ export function fieldControls(workflow?: Workflow): FieldControl[] {
     if (!previous || (previous.mappedAs === 'custom' && mapping.mappedAs !== 'custom')) unique.set(key, mapping)
   }
   return [...unique.values()].filter((mapping) => !['positive_prompt', 'negative_prompt'].includes(mapping.mappedAs)).flatMap((mapping) => {
+    // Initial-image mapping enables the source override; only an explicit
+    // custom mapping enables a manual filename/path editor for that input.
+    if (mapping.mappedAs === 'init_image' && !customKeys.has(`${mapping.nodeId}:${mapping.fieldName}`)) return []
     const node = workflow.config.workflow_api_json?.[mapping.nodeId]
     const value = node?.inputs[mapping.fieldName]
     if (!['string', 'number', 'boolean'].includes(typeof value)) return []
@@ -88,12 +99,13 @@ export function buildInput(step: Step, kind: MediaKind, catalog: Catalog, contex
   if (!presetId && !step.prompt.trim()) throw new Error('Select a Main Preset or enter a prompt override.')
   const mappings = workflow.config.field_mappings
   if (!mappings.some((m) => m.mappedAs === 'positive_prompt')) throw new Error('Map a positive prompt field in this workflow in ImgGen first.')
-  if (step.source !== 'none' && !context.sourceImageId) throw new Error('Choose a source image or generate an image first.')
-  if (context.sourceImageId && !mappings.some((m) => m.mappedAs === 'init_image')) throw new Error('This workflow needs an init_image mapping to receive the source image.')
+  const acceptsSource = supportsSourceImage(workflow)
+  const sourceImageId = acceptsSource ? context.sourceImageId : undefined
+  if (acceptsSource && step.source !== 'none' && !sourceImageId) throw new Error('Choose a source image or generate an image first.')
   const patch: Record<string, unknown> = { custom: {}, node_fields: {} }
   for (const field of fieldControls(workflow)) {
     if (field.semantic.startsWith('lora_') && !step.bypassLoras) continue
-    if (field.semantic === 'init_image' && context.sourceImageId) continue
+    if (field.semantic === 'init_image' && sourceImageId) continue
     const value = Object.hasOwn(step.fields, field.key) ? step.fields[field.key]! : field.value
     if (typeof value !== typeof field.value || (typeof value === 'number' && !Number.isFinite(value))) throw new Error(`Invalid value for ${field.label}.`)
     if (field.options.length && !field.options.includes(String(value))) throw new Error(`Choose an available value for ${field.label}.`)
@@ -106,7 +118,7 @@ export function buildInput(step: Step, kind: MediaKind, catalog: Catalog, contex
     prompt: step.prompt.trim() ? step.prompt : undefined,
     negativePrompt: step.negativePrompt.trim() ? step.negativePrompt : undefined,
     promptMode: presetId ? catalog.presets.find((p) => p.id === presetId)!.mode : 'custom' as const,
-    source_image_id: context.sourceImageId, output_media_type: kind,
+    source_image_id: sourceImageId, output_media_type: kind,
     output_node_id: step.outputNodeId || undefined, clientJobId: context.jobId,
     includeDataUrl: false, forceGeneration: true, generationTimeoutSeconds: step.timeoutSeconds,
     characterLora: step.bypassLoras ? { source: 'none' as const } : undefined,

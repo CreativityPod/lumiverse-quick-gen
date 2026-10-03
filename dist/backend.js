@@ -1,4 +1,4 @@
-// QuickGen 0.1.2 — generated from src/.
+// QuickGen 0.1.3 — generated from src/.
 
 // src/model.ts
 var emptyStep = (kind) => ({
@@ -20,9 +20,16 @@ function workflows(connection) {
   const config = connection?.metadata.comfyui;
   return config?.workflow_api_json ? [{ id: "__legacy__", name: "Imported workflow", config }] : [];
 }
+function supportsSourceImage(workflow) {
+  return workflow?.config.field_mappings.some((mapping) => {
+    const node = workflow.config.workflow_api_json?.[mapping.nodeId];
+    return mapping.mappedAs === "init_image" && !!node?.inputs && Object.hasOwn(node.inputs, mapping.fieldName);
+  }) ?? false;
+}
 function fieldControls(workflow) {
   if (!workflow)
     return [];
+  const customKeys = new Set(workflow.config.field_mappings.filter((mapping) => mapping.mappedAs === "custom").map((mapping) => `${mapping.nodeId}:${mapping.fieldName}`));
   const unique = new Map;
   for (const mapping of workflow.config.field_mappings) {
     const key = `${mapping.nodeId}:${mapping.fieldName}`;
@@ -31,6 +38,8 @@ function fieldControls(workflow) {
       unique.set(key, mapping);
   }
   return [...unique.values()].filter((mapping) => !["positive_prompt", "negative_prompt"].includes(mapping.mappedAs)).flatMap((mapping) => {
+    if (mapping.mappedAs === "init_image" && !customKeys.has(`${mapping.nodeId}:${mapping.fieldName}`))
+      return [];
     const node = workflow.config.workflow_api_json?.[mapping.nodeId];
     const value = node?.inputs[mapping.fieldName];
     if (!["string", "number", "boolean"].includes(typeof value))
@@ -75,15 +84,15 @@ function buildInput(step, kind, catalog, context) {
   const mappings = workflow.config.field_mappings;
   if (!mappings.some((m) => m.mappedAs === "positive_prompt"))
     throw new Error("Map a positive prompt field in this workflow in ImgGen first.");
-  if (step.source !== "none" && !context.sourceImageId)
+  const acceptsSource = supportsSourceImage(workflow);
+  const sourceImageId = acceptsSource ? context.sourceImageId : undefined;
+  if (acceptsSource && step.source !== "none" && !sourceImageId)
     throw new Error("Choose a source image or generate an image first.");
-  if (context.sourceImageId && !mappings.some((m) => m.mappedAs === "init_image"))
-    throw new Error("This workflow needs an init_image mapping to receive the source image.");
   const patch = { custom: {}, node_fields: {} };
   for (const field of fieldControls(workflow)) {
     if (field.semantic.startsWith("lora_") && !step.bypassLoras)
       continue;
-    if (field.semantic === "init_image" && context.sourceImageId)
+    if (field.semantic === "init_image" && sourceImageId)
       continue;
     const value = Object.hasOwn(step.fields, field.key) ? step.fields[field.key] : field.value;
     if (typeof value !== typeof field.value || typeof value === "number" && !Number.isFinite(value))
@@ -104,7 +113,7 @@ function buildInput(step, kind, catalog, context) {
     prompt: step.prompt.trim() ? step.prompt : undefined,
     negativePrompt: step.negativePrompt.trim() ? step.negativePrompt : undefined,
     promptMode: presetId ? catalog.presets.find((p) => p.id === presetId).mode : "custom",
-    source_image_id: context.sourceImageId,
+    source_image_id: sourceImageId,
     output_media_type: kind,
     output_node_id: step.outputNodeId || undefined,
     clientJobId: context.jobId,
@@ -195,9 +204,10 @@ async function start(userId, raw, chatId) {
   const cancelled = () => job.status === "cancelling";
   try {
     const options = await catalog(userId);
-    const selectedSource = step.source === "last" ? previous?.image?.imageId : step.source === "none" ? undefined : step.source;
-    const input = buildInput(step, kind, options, { chatId, jobId: `${job.id}:${kind}`, sourceImageId: selectedSource });
     const connection = options.connections.find((entry) => entry.id === step.connectionId);
+    const workflow = workflows(connection).find((entry) => entry.id === step.workflowId);
+    const selectedSource = !supportsSourceImage(workflow) ? undefined : step.source === "last" ? previous?.image?.imageId : step.source === "none" ? undefined : step.source;
+    const input = buildInput(step, kind, options, { chatId, jobId: `${job.id}:${kind}`, sourceImageId: selectedSource });
     job.recipeName = connection?.name ?? "QuickGen";
     await spindle.userStorage.setJson(LAST_PATH, job, { userId });
     send(userId, { type: "qg_job", job });

@@ -7,8 +7,8 @@ A separate Spindle extension with a drawer panel and an input-bar shortcut. Sele
 1. Import **API-format** workflows in Lumiverse's Image Gen Connections settings. Map a `positive_prompt` field. Map `init_image` to a Load Image field when the workflow needs an image. Configure additional CUSTOM FIELDS and their choices in ImgGen.
 2. Open QuickGen from the drawer or the input bar's Extras menu.
 3. Select a connection, saved workflow, Main Preset, and output type (**Image** or **Video**).
-4. Choose values under **Workflow fields**. Load Image fields show the saved ComfyUI filename choices, including fields mapped as `init_image`. Numeric, boolean, text, and stored dropdown choices retain their types.
-5. Leave **Source image override** on **Use workflow image fields / no override** to use the ComfyUI filename selection. Alternatively, choose a still image from Lumiverse or **Previous QuickGen image**; this uploads that image to ComfyUI and replaces the mapped Load Image value. The filename control is disabled while an override is selected. An ImgGen result can be selected from the Lumiverse images list after Refresh.
+4. Choose values under **Workflow fields**. Load Image filename/path controls appear only when that input is explicitly enabled as a CUSTOM FIELD. Saved filename choices appear as a dropdown; path inputs remain editable. Numeric, boolean, text, and stored dropdown choices retain their types.
+5. **Source image override** appears only when Initial / Reference Image (`init_image`) is mapped to an existing workflow node/input. Leave it on **Use workflow image fields / no override** to use the ComfyUI filename selection. Alternatively, choose a still image from Lumiverse or **Previous QuickGen image**; this uploads that image to ComfyUI and replaces the mapped Load Image value. The filename control is disabled while an override is selected. An ImgGen result can be selected from the Lumiverse images list after Refresh.
 6. Click **Generate image** or **Generate video**. QuickGen runs only the chosen workflow. Review the result in the panel. To use another workflow afterward, select it and generate again.
 
 QuickGen remembers your last selection automatically in its per-user storage. “Use active Main Preset” captures its ID at the start of the job. A selected preset is used for that request without activating it in ImgGen. Prompt overrides are optional; with a parsed preset, they still go through its parser. The option to skip native character and active preset LoRAs is under **Prompt and run options**.
@@ -19,9 +19,20 @@ Version 0.1.1 uses one workflow panel and removes the New, Duplicate, Delete, an
 
 Version 0.1.2 removes duplicate controls when the same node input has both a standard mapping and a CUSTOM FIELD mapping. The one remaining control keeps its saved value and options. Separate nodes with similar names remain separate controls.
 
+Version 0.1.3 follows the saved mappings for image controls:
+
+| Initial / Reference Image mapped | Image input enabled as CUSTOM FIELD | Visible controls |
+| --- | --- | --- |
+| No | No | Neither |
+| Yes | No | Source image override |
+| No | Yes | Filename/path field |
+| Yes | Yes | Source image override and one filename/path field |
+
+When a source override is selected, its mapped filename/path control is disabled. Switching to a workflow without an initial-image mapping clears the source override, and generation ignores stale source selections and hidden path values. Refresh rereads mappings changed in ImgGen.
+
 ## Update an existing installation
 
-Replace `src/`, `dist/`, `spindle.json`, `package.json`, and `scripts/` in the installed extension's `repo` folder with this version, then reload the QuickGen extension and refresh the Lumiverse page. Preserve the extension's user storage. Version 0.1.2 uses the same core patch as 0.1.0; no further Lumiverse core changes are required.
+Replace `src/`, `dist/`, `spindle.json`, `package.json`, and `scripts/` in the installed extension's `repo` folder with this version, then reload the QuickGen extension and refresh the Lumiverse page. Preserve the extension's user storage. Version 0.1.3 uses the same core patch as 0.1.0; no further Lumiverse core changes are required.
 
 ## Install locally
 
@@ -56,7 +67,7 @@ No database migrations, global setting changes, frontend core changes, or genera
 
 ## Scope and limits
 
-- Version 0.1.2 supports saved **ComfyUI** workflows. SwarmUI and arbitrary MCP runners are not implemented.
+- Version 0.1.3 supports saved **ComfyUI** workflows. SwarmUI and arbitrary MCP runners are not implemented.
 - A mapped positive prompt is required. The workflow's models and custom nodes must already be installed on the configured ComfyUI server. A source image requires an `init_image` mapping.
 - For videos, use MP4 or WebM for browser playback. Other collected formats depend on the browser's codecs. Use **Final output node** when multiple nodes save the same kind of media.
 - Progress and cancellation work while the extension backend is running; changing chats or closing the drawer does not end a job. A Lumiverse/extension restart ends live tracking. The last job and completed assets persist, but unfinished jobs are not automatically resumed.

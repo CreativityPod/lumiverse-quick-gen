@@ -1,5 +1,5 @@
 import type { Host } from './host-types'
-import { buildInput, migrateSettings, normalizeSettings, type Asset, type Catalog, type Job, type LegacySettings, type Result, type Settings } from './model'
+import { buildInput, migrateSettings, normalizeSettings, supportsSourceImage, workflows, type Asset, type Catalog, type Job, type LegacySettings, type Result, type Settings } from './model'
 declare const spindle: Host
 
 const jobs = new Map<string, Job>()
@@ -55,9 +55,10 @@ async function start(userId: string, raw: unknown, chatId: unknown): Promise<Job
   const cancelled = () => job.status === 'cancelling'
   try {
     const options = await catalog(userId)
-    const selectedSource = step.source === 'last' ? previous?.image?.imageId : step.source === 'none' ? undefined : step.source
-    const input = buildInput(step, kind, options, { chatId, jobId: `${job.id}:${kind}`, sourceImageId: selectedSource })
     const connection = options.connections.find((entry) => entry.id === step.connectionId)
+    const workflow = workflows(connection).find((entry) => entry.id === step.workflowId)
+    const selectedSource = !supportsSourceImage(workflow) ? undefined : step.source === 'last' ? previous?.image?.imageId : step.source === 'none' ? undefined : step.source
+    const input = buildInput(step, kind, options, { chatId, jobId: `${job.id}:${kind}`, sourceImageId: selectedSource })
     job.recipeName = connection?.name ?? 'QuickGen'
     await spindle.userStorage.setJson(LAST_PATH, job, { userId })
     send(userId, { type: 'qg_job', job })

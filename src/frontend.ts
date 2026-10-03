@@ -1,5 +1,5 @@
 import type { SpindleFrontendContext } from 'lumiverse-spindle-types'
-import { fieldControls, workflows, type Asset, type Catalog, type Job, type MediaKind, type Scalar, type Settings, type Step } from './model'
+import { fieldControls, supportsSourceImage, workflows, type Asset, type Catalog, type Job, type MediaKind, type Scalar, type Settings, type Step } from './model'
 import { styles } from './styles'
 interface Bootstrap { supported: boolean; settings: Settings; catalog: Catalog | null; assets: Asset[]; job: Job | null }
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
@@ -96,6 +96,8 @@ export function setup(ctx: SpindleFrontendContext) {
     const connection = state!.catalog?.connections.find((c) => c.id === step.connectionId)
     const list = workflows(connection)
     const workflow = list.find((w) => w.id === step.workflowId)
+    const acceptsSource = supportsSourceImage(workflow)
+    if (!acceptsSource) step.source = 'none'
     const panel = el('section', '', 'qg-step')
     const connections = state!.catalog?.connections ?? []
     panel.append(control('ComfyUI connection', select([{ value: '', label: 'Choose a connection' }, ...connections.map((c) => ({ value: c.id, label: c.name }))], step.connectionId, (value) => {
@@ -106,9 +108,11 @@ export function setup(ctx: SpindleFrontendContext) {
     })))
     panel.append(control('Main Preset', select([{ value: '', label: 'Use active Main Preset' }, ...(state!.catalog?.presets ?? []).map((p) => ({ value: p.id, label: p.name }))], step.presetId, (value) => { step.presetId = value; changed() })))
     panel.append(control('Output', select([{ value: 'image', label: 'Image' }, { value: 'video', label: 'Video' }], kind, (value) => { draft!.kind = value as MediaKind; changed(); render() })))
-    const sourceItems = [{ value: 'none', label: 'Use workflow image fields / no override' }, { value: 'last', label: 'Previous QuickGen image' }, ...state!.assets.map((asset) => ({ value: asset.id, label: asset.original_filename || asset.id }))]
-    panel.append(control('Source image override', select(sourceItems, step.source, (value) => { step.source = value; changed(); render() })))
-    if (step.source !== 'none') panel.append(el('small', 'The source image override replaces the workflow’s Load Image value.'))
+    if (acceptsSource) {
+      const sourceItems = [{ value: 'none', label: 'Use workflow image fields / no override' }, { value: 'last', label: 'Previous QuickGen image' }, ...state!.assets.map((asset) => ({ value: asset.id, label: asset.original_filename || asset.id }))]
+      panel.append(control('Source image override', select(sourceItems, step.source, (value) => { step.source = value; changed(); render() })))
+      if (step.source !== 'none') panel.append(el('small', 'The source image override replaces the workflow’s Load Image value.'))
+    }
     const controls = fieldControls(workflow).filter((field) => (step.bypassLoras || !field.semantic.startsWith('lora_')))
     const fields = el('details')
     fields.open = true
