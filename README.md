@@ -2,6 +2,8 @@
 
 A separate Spindle extension with a drawer panel and an input-bar shortcut. Select one existing ComfyUI workflow, an ImgGen Main Preset, and mapped field values, then generate an image or video.
 
+**Requires Lumiverse v1.2.4 or newer with the QuickGen API changes.**
+
 ## Use
 
 1. Import **API-format** workflows in Lumiverse's Image Gen Connections settings. Map a `positive_prompt` field. Map `init_image` to a Load Image field when the workflow needs an image. Configure additional CUSTOM FIELDS and their choices in ImgGen.
@@ -9,7 +11,10 @@ A separate Spindle extension with a drawer panel and an input-bar shortcut. Sele
 3. Select a connection, saved workflow, Main Preset, and output type (**Image** or **Video**).
 4. Choose values under **Workflow fields**. Load Image filename/path controls appear only when that input is explicitly enabled as a CUSTOM FIELD. Saved filename choices appear as a dropdown; path inputs remain editable. Numeric, boolean, text, and stored dropdown choices retain their types.
 5. **Source image override** appears only when Initial / Reference Image (`init_image`) is mapped to an existing workflow node/input. Leave it on **Use workflow image fields / no override** to use the ComfyUI filename selection. Alternatively, choose a still image from Lumiverse or **Previous QuickGen image**; this uploads that image to ComfyUI and replaces the mapped Load Image value. The filename control is disabled while an override is selected. An ImgGen result can be selected from the Lumiverse images list after Refresh.
-6. Click **Generate image** or **Generate video**. QuickGen runs only the chosen workflow. Review the result in the panel. To use another workflow afterward, select it and generate again.
+6. Choose **Output**: **Preview only** (the default) or **Insert into chat**, using the same wording as ImgGen. This applies to both images and videos.
+7. Click **Generate image** or **Generate video**. QuickGen runs only the chosen workflow. Review the result in the panel. With **Insert into chat**, the result is also posted to the chat where the run started. Preview results have an **Insert into chat** button for posting later.
+
+Chat insertion requires the **Chat Mutation** permission, requested when you choose to insert. Preview-only generation works without it. Chat insertion creates an assistant message containing the saved image or a video player; it does not trigger an assistant reply. Switching chats does not change the destination, including for a previous image retained during a video run. Posted results show **Inserted into chat** and cannot be posted again through that result's button. If posting fails, the generated media stays available and can be retried.
 
 QuickGen remembers your last selection automatically in its per-user storage. “Use active Main Preset” captures its ID at the start of the job. A selected preset is used for that request without activating it in ImgGen. Prompt overrides are optional; with a parsed preset, they still go through its parser. The option to skip native character and active preset LoRAs is under **Prompt and run options**.
 
@@ -32,13 +37,13 @@ When a source override is selected, its mapped filename/path control is disabled
 
 ## Update an existing installation
 
-Replace `src/`, `dist/`, `spindle.json`, `package.json`, and `scripts/` in the installed extension's `repo` folder with this version, then reload the QuickGen extension and refresh the Lumiverse page. Preserve the extension's user storage. Version 0.1.3 uses the same core patch as 0.1.0; no further Lumiverse core changes are required.
+Replace `src/`, `dist/`, `spindle.json`, `package.json`, and `scripts/` in the installed extension's `repo` folder with this version, then reload the QuickGen extension and refresh the Lumiverse page. Preserve the extension's user storage. Version 0.1.4 adds optional chat insertion using the existing Spindle chat API; no further Lumiverse core changes are required. Existing selections migrate to **Preview only**.
 
 ## Install locally
 
-This extension requires the accompanying core patch. Lumiverse 1.2.4 by itself does not include these APIs. This checkout already has the patch applied; `lumiverse-core.patch` is included for another matching checkout.
+Requires **Lumiverse v1.2.4 or newer** with the QuickGen API changes from the pending Lumiverse PR. Until that PR is merged, use the Lumiverse `quick-gen` branch; the released v1.2.4 alone does not include the required APIs.
 
-1. Update/restart Lumiverse with the patch. If applying elsewhere, run `git apply --check /path/to/lumiverse-quick-gen/lumiverse-core.patch` before applying it.
+1. Use a **Lumiverse v1.2.4 or newer** build containing the QuickGen API changes and restart it.
 2. Copy this extension's folder to `<Lumiverse data directory>/extensions/quick_gen`. Include `spindle.json` and `dist/`; `node_modules` is not needed to run the built bundles.
 3. Use **Import local extensions** in Spindle. Lumiverse normalizes the copied folder into its managed `repo` layout. Enable QuickGen and grant its **Image Generation** and **Images** permissions.
 
@@ -53,7 +58,7 @@ bun run check
 
 The shipped `dist/backend.js` and `dist/frontend.js` are self-contained. No MCP server, additional runtime service, or chat commands are required. Generation runs in the extension backend using the native Spindle generation API.
 
-## Minimum core changes
+## Lumiverse APIs used
 
 - `spindle.imageGen.getPromptPresets(userId?)`: read Main Presets and active preset/connection IDs, gated by `image_gen` and account scope.
 - `generateNative()` request-local `connection_id`, `source_image_id`, `output_media_type`, and `output_node_id` options. Source bytes are loaded on the host; large image/video data URLs stay out of extension messages with `includeDataUrl: false`.
@@ -63,14 +68,14 @@ The shipped `dist/backend.js` and `dist/frontend.js` are self-contained. No MCP 
 - `spindle.imageGen.cancelNative(jobId, userId?)`: cancels only a generation belonging to the calling extension and account. Extension jobs use a separate cancellation namespace from ImgGen.
 - Generated filenames preserve their MIME extension using the existing media store. The existing authenticated asset endpoint supplies video byte-range serving and posters.
 
-No database migrations, global setting changes, frontend core changes, or general-purpose job endpoints are introduced. Results remain preview assets; QuickGen does not automatically post to chat or the character gallery.
+Once the QuickGen API changes are present, the extension uses these host APIs without further Lumiverse code changes or database migrations. Results default to preview assets. Chat insertion is optional; the character gallery is not changed. Inserted media is embedded in message content rather than written to native attachment metadata.
 
 ## Scope and limits
 
-- Version 0.1.3 supports saved **ComfyUI** workflows. SwarmUI and arbitrary MCP runners are not implemented.
+- Version 0.1.4 supports saved **ComfyUI** workflows. SwarmUI and arbitrary MCP runners are not implemented.
 - A mapped positive prompt is required. The workflow's models and custom nodes must already be installed on the configured ComfyUI server. A source image requires an `init_image` mapping.
 - For videos, use MP4 or WebM for browser playback. Other collected formats depend on the browser's codecs. Use **Final output node** when multiple nodes save the same kind of media.
 - Progress and cancellation work while the extension backend is running; changing chats or closing the drawer does not end a job. A Lumiverse/extension restart ends live tracking. The last job and completed assets persist, but unfinished jobs are not automatically resumed.
 - Imported field choices are used as saved. Refresh QuickGen after editing workflows or presets. ComfyUI validates additional model-specific limits, such as allowed frame counts.
 - Mapped controls start from the imported workflow's values. Set a mapped seed to `-1` for a new random seed on each run. Separate sampler stages keep their individual values.
-- Extension tests cover preset/workflow isolation, typed custom fields, Load Image choices and source overrides, single-workflow execution, legacy selection migration, video retry, and the panel. The core patch includes mocked ComfyUI HTTP/WebSocket media tests. Actual GPU generation must still be verified against your installed image and video workflows.
+- Extension tests cover preset/workflow isolation, typed custom fields, Load Image choices and source overrides, single-workflow execution, legacy selection migration, video retry, and the panel. Actual GPU generation must still be verified against your installed image and video workflows.

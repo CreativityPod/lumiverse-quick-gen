@@ -2,7 +2,7 @@ import { afterEach, expect, test } from 'bun:test'
 import { JSDOM } from 'jsdom'
 import type { SpindleFrontendContext } from 'lumiverse-spindle-types'
 import { setup } from '../src/frontend'
-import { emptyStep, type Catalog, type Job } from '../src/model'
+import { emptyStep, type Catalog, type Job, type Settings } from '../src/model'
 
 let teardown: (() => void) | undefined
 let dom: JSDOM | undefined
@@ -82,4 +82,58 @@ test.each([{ dropdown: true, initial: true, custom: true }, { dropdown: false, i
   expect(root.querySelector('video')?.controls).toBe(true)
   expect(root.querySelector('img')?.getAttribute('src')).toBe('/api/v1/images/image')
   expect(root.querySelector('script')).toBeNull()
+})
+
+test.each([true, false])('ImgGen-style output selection and result insertion respect permission (granted=%s)', async (granted) => {
+  dom = new JSDOM('<div id="root"></div>', { url: 'http://localhost' })
+  Object.assign(globalThis, { document: dom.window.document, HTMLElement: dom.window.HTMLElement, HTMLVideoElement: dom.window.HTMLVideoElement })
+  const root = document.getElementById('root')!
+  const requests: any[] = []
+  const permissions: string[][] = []
+  let activeChat = 'original'
+  let onMessage: (message: unknown) => void = () => {}
+  let saved: Settings = { kind: 'image', outputTarget: 'preview', step: { ...emptyStep('image'), connectionId: 'conn', workflowId: 'wf' } }
+  const job: Job = { id: 'finished', chatId: 'original', mode: 'image', phase: 'image', status: 'complete', recipeName: 'Comfy', startedAt: 1,
+    image: { imageId: 'asset', chatId: 'original', mediaType: 'image', mimeType: 'image/png', mediaUrl: '/api/v1/images/asset', prompt: 'resolved' },
+  }
+  const ctx = {
+    ui: { registerDrawerTab: () => ({ root, setBadge: () => {}, activate: () => {}, destroy: () => {} }), registerInputBarAction: () => ({ onClick: () => () => {}, destroy: () => {} }) },
+    dom: { addStyle: () => () => {} }, events: { on: () => () => {} },
+    permissions: { getGranted: async () => [], request: async (requested: string[]) => { permissions.push(requested); return granted ? requested : [] } },
+    getActiveChat: () => ({ chatId: activeChat, characterId: 'char' }),
+    onBackendMessage: (callback: typeof onMessage) => { onMessage = callback; return () => {} },
+    sendToBackend: (request: any) => {
+      requests.push(request)
+      if (request.type === 'qg_save') saved = request.selection
+      const result = request.type === 'qg_bootstrap' ? { supported: true, settings: saved, assets: [], job: null,
+        catalog: { activeId: null, presets: [], connections: [{ id: 'conn', name: 'Comfy', provider: 'comfyui', metadata: {} }] } }
+        : request.type === 'qg_save' ? saved
+        : request.type === 'qg_insert' ? { ...job, image: { ...job.image, chatMessageId: 'posted' } } : job
+      queueMicrotask(() => onMessage({ requestId: request.requestId, ok: true, result }))
+    },
+  } as unknown as SpindleFrontendContext
+  teardown = setup(ctx); await Bun.sleep(1)
+  const output = [...root.querySelectorAll('label')].find((label) => label.querySelector('span')?.textContent === 'Output')!.querySelector('select')!
+  expect([...output.options].map((option) => option.textContent)).toEqual(['Insert into chat', 'Preview only'])
+  expect(output.value).toBe('preview')
+  output.value = 'chat_attachment'; output.dispatchEvent(new dom.window.Event('change'))
+  ;[...root.querySelectorAll('button')].find((button) => button.textContent === 'Generate image')!.click()
+  await Bun.sleep(5)
+  expect(permissions).toEqual([['chat_mutation']])
+  if (granted) {
+    expect(requests.find((request) => request.type === 'qg_start').selection.outputTarget).toBe('chat_attachment')
+    expect(saved.outputTarget).toBe('chat_attachment')
+  } else expect(requests.some((request) => request.type === 'qg_start')).toBe(false)
+
+  activeChat = 'another-chat'; onMessage({ type: 'qg_job', job })
+  expect(root.textContent).toContain('Inserts into the original chat.')
+  const insert = [...root.querySelectorAll('button')].find((button) => button.textContent === 'Insert into chat')!
+  insert.click(); insert.click(); await Bun.sleep(5)
+  const inserts = requests.filter((request) => request.type === 'qg_insert')
+  expect(inserts).toHaveLength(granted ? 1 : 0)
+  if (granted) {
+    expect(inserts[0]).toMatchObject({ jobId: 'finished', kind: 'image' })
+    expect(inserts[0].chatId).toBeUndefined()
+    expect([...root.querySelectorAll('button')].find((button) => button.textContent === 'Inserted into chat')?.disabled).toBe(true)
+  } else expect(root.textContent).toContain('Chat Mutation')
 })

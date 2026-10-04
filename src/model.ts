@@ -17,9 +17,10 @@ export interface Step {
 }
 export interface Recipe { id: string; name: string; image: Step; video: Step }
 export interface LegacySettings { recipes: Recipe[]; selectedId: string }
-export interface Settings { kind: MediaKind; step: Step }
+export type OutputTarget = 'preview' | 'chat_attachment'
+export interface Settings { kind: MediaKind; step: Step; outputTarget: OutputTarget }
 export interface Asset { id: string; url: string; mime_type: string; original_filename: string; owner_chat_id?: string | null }
-export interface Result { imageId: string; mediaUrl: string; mediaType: MediaKind; mimeType: string; prompt: string; jobId?: string }
+export interface Result { imageId: string; mediaUrl: string; mediaType: MediaKind; mimeType: string; prompt: string; jobId?: string; chatId?: string; chatMessageId?: string; chatError?: string }
 export interface Job {
   id: string; chatId: string; recipeName: string; mode: MediaKind | 'sequence'
   phase: 'image' | 'video'; status: 'running' | 'cancelling' | 'cancelled' | 'complete' | 'failed'
@@ -131,7 +132,15 @@ export function normalizeSettings(raw: unknown): Settings {
   const input = raw as Partial<Settings> | null
   if (input?.kind !== 'image' && input?.kind !== 'video') throw new Error('Choose image or video output.')
   const recipe = normalizeRecipe({ id: 'launcher', name: 'QuickGen', [input.kind]: input.step })
-  return { kind: input.kind, step: recipe[input.kind] }
+  return { kind: input.kind, step: recipe[input.kind], outputTarget: input.outputTarget === 'chat_attachment' ? 'chat_attachment' : 'preview' }
+}
+
+/** Use the host's authenticated asset route, never HTML or URLs supplied by a client. */
+export function chatContent(result: Result): string {
+  const url = `/api/v1/images/${encodeURIComponent(result.imageId)}`
+  return result.mediaType === 'video'
+    ? `<video src="${url}" controls playsinline preload="metadata"></video>`
+    : `<img src="${url}" alt="QuickGen image" />`
 }
 
 export function migrateSettings(legacy?: LegacySettings | null): Settings {

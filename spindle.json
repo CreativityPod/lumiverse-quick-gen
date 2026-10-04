@@ -1,12 +1,12 @@
 {
-  "version": "0.1.3",
+  "version": "0.1.4",
   "name": "QuickGen",
   "identifier": "quick_gen",
   "author": "CreativityPod",
   "github": "https://github.com/CreativityPod/lumiverse-quick-gen",
   "homepage": "https://github.com/CreativityPod/lumiverse-quick-gen",
   "description": "Run one saved ComfyUI workflow with a selected Main Preset and custom fields.",
-  "permissions": ["image_gen", "images"],
+  "permissions": ["image_gen", "images", "chat_mutation"],
   "entry_backend": "dist/backend.js",
   "entry_frontend": "dist/frontend.js",
   "minimum_lumiverse_version": "1.2.4"

@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { buildInput, fieldControls, migrateSettings, newRecipe, supportsSourceImage, type Catalog, type Workflow } from '../src/model'
+import { buildInput, chatContent, fieldControls, migrateSettings, normalizeSettings, newRecipe, supportsSourceImage, type Catalog, type Workflow } from '../src/model'
 const workflow: Workflow = { id: 'w', name: 'Example', config: {
   workflow_api_json: {
     '1': { class_type: 'CLIPTextEncode', inputs: { text: 'prompt' } },
@@ -14,6 +14,20 @@ const workflow: Workflow = { id: 'w', name: 'Example', config: {
   ], field_options: { '2:image': ['default.png', 'portrait.png'], '3:model': ['small', 'large'] },
 } }
 const catalog: Catalog = { activeId: 'active', activeConnectionId: 'c', presets: [{ id: 'active', name: 'Main', mode: 'parsed_custom' }, { id: 'other', name: 'Motion', mode: 'custom' }], connections: [{ id: 'c', name: 'Comfy', provider: 'comfyui', metadata: { comfyui_workflows: [workflow] } }] }
+test('chat output is opt-in and remembered independently of ImgGen', () => {
+  expect(migrateSettings(null).outputTarget).toBe('preview')
+  expect(normalizeSettings({ kind: 'image', step: {} }).outputTarget).toBe('preview')
+  expect(normalizeSettings({ kind: 'video', outputTarget: 'background' }).outputTarget).toBe('preview')
+  expect(normalizeSettings({ kind: 'image', outputTarget: 'chat_attachment' }).outputTarget).toBe('chat_attachment')
+})
+test('chat embeds use a local saved asset and cannot inject prompts or supplied URLs', () => {
+  const result = { imageId: 'image"/><script>x</script>', mediaUrl: 'javascript:alert(1)', mediaType: 'image' as const, mimeType: 'image/png', prompt: '<script>bad</script>' }
+  const image = chatContent(result)
+  expect(image).toContain('/api/v1/images/image%22%2F%3E%3Cscript%3Ex%3C%2Fscript%3E')
+  expect(image).not.toContain('<script>')
+  expect(image).not.toContain('javascript:')
+  expect(chatContent({ ...result, imageId: 'video', mediaType: 'video' })).toBe('<video src="/api/v1/images/video" controls playsinline preload="metadata"></video>')
+})
 function step() { return { ...newRecipe('r').video, connectionId: 'c', workflowId: 'w', source: 'last' } }
 test('uses a selected preset and custom types without mutating defaults', () => {
   const before = JSON.stringify({ workflow, catalog })

@@ -13,6 +13,7 @@ export const styles = `
 .qg-status {border:1px solid var(--qg-border); border-radius:10px; padding:12px; margin-top:12px; font-size:12px; line-height:1.6} .qg-status[role=alert] {color:#f6a6a6; border-color:rgba(230,110,110,.4)}
 .qg progress {width:100%; height:6px; accent-color:#62bdce; margin-top:8px} .qg-results {display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; margin-top:14px}
 .qg-results figure {margin:0; overflow:hidden; border:1px solid var(--qg-border); border-radius:10px} .qg-results img,.qg-results video {width:100%; max-height:360px; object-fit:contain; display:block; background:rgba(0,0,0,.2)} .qg-results figcaption {padding:10px; font-size:12px}
+.qg-result-actions {display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px; margin-bottom:6px} .qg label>small {display:block; margin-top:5px; line-height:1.5}
 .qg a {color:#80ccda} .qg footer {margin-top:16px; color:var(--qg-muted); font-size:11px} .qg .qg-saved {color:var(--qg-muted); font-size:11px}
 @media(max-width:700px) {.qg{padding:12px}}
 `

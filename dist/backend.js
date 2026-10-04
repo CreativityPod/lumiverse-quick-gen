@@ -1,4 +1,4 @@
-// QuickGen 0.1.3 — generated from src/.
+// QuickGen 0.1.4 — generated from src/.
 
 // src/model.ts
 var emptyStep = (kind) => ({
@@ -52,8 +52,8 @@ function normalizeRecipe(raw) {
   const r = raw;
   if (!r || typeof r.id !== "string" || typeof r.name !== "string" || !r.name.trim())
     throw new Error("Recipe needs an ID and name.");
-  const normalizeStep = (raw2, kind) => {
-    const step = raw2;
+  const normalizeStep = (raw, kind) => {
+    const step = raw;
     const result = emptyStep(kind);
     for (const key of ["connectionId", "workflowId", "presetId", "prompt", "negativePrompt", "source", "outputNodeId"]) {
       if (typeof step?.[key] === "string")
@@ -130,7 +130,11 @@ function normalizeSettings(raw) {
   if (input?.kind !== "image" && input?.kind !== "video")
     throw new Error("Choose image or video output.");
   const recipe = normalizeRecipe({ id: "launcher", name: "QuickGen", [input.kind]: input.step });
-  return { kind: input.kind, step: recipe[input.kind] };
+  return { kind: input.kind, step: recipe[input.kind], outputTarget: input.outputTarget === "chat_attachment" ? "chat_attachment" : "preview" };
+}
+function chatContent(result) {
+  const url = `/api/v1/images/${encodeURIComponent(result.imageId)}`;
+  return result.mediaType === "video" ? `<video src="${url}" controls playsinline preload="metadata"></video>` : `<img src="${url}" alt="QuickGen image" />`;
 }
 function migrateSettings(legacy) {
   const recipe = legacy?.recipes.find((entry) => entry.id === legacy.selectedId) ?? legacy?.recipes[0];
@@ -142,6 +146,7 @@ function migrateSettings(legacy) {
 var jobs = new Map;
 var locks = new Map;
 var activeIds = new Map;
+var insertions = new Map;
 var STATE_PATH = "selection.json";
 var LAST_PATH = "last-job.json";
 var supported = () => typeof spindle.imageGen.getPromptPresets === "function" && typeof spindle.imageGen.cancelNative === "function";
@@ -165,7 +170,7 @@ function withSettings(userId, work) {
 }
 async function catalog(userId) {
   if (!supported())
-    throw new Error("QuickGen needs the included Lumiverse core patch. Apply it and restart Lumiverse.");
+    throw new Error("QuickGen requires Lumiverse v1.2.4 or newer with the QuickGen APIs. Use a build containing those changes and restart Lumiverse.");
   const [presets, connections] = await Promise.all([
     spindle.imageGen.getPromptPresets(userId),
     spindle.imageGen.listConnections(userId)
@@ -187,6 +192,35 @@ async function lastJob(userId) {
   }
   return stored;
 }
+async function insertResult(userId, job, kind) {
+  if (!spindle.permissions.has("chat_mutation"))
+    throw new Error("Grant QuickGen the Chat Mutation permission to insert into chat.");
+  const result = job[kind];
+  if (!result?.imageId)
+    throw new Error("No saved result is available to insert.");
+  if (result.chatMessageId)
+    return;
+  const key = `${userId}:${result.imageId}`;
+  let pending = insertions.get(key);
+  if (!pending) {
+    pending = spindle.chat.appendMessage(result.chatId ?? job.chatId, {
+      role: "assistant",
+      content: chatContent(result),
+      metadata: { quickGen: { jobId: job.id, imageId: result.imageId, mediaType: result.mediaType } }
+    });
+    insertions.set(key, pending);
+  }
+  try {
+    result.chatMessageId = (await pending).id;
+    delete result.chatError;
+  } catch (error) {
+    result.chatError = error instanceof Error ? error.message : String(error);
+    throw error;
+  } finally {
+    if (insertions.get(key) === pending)
+      insertions.delete(key);
+  }
+}
 async function start(userId, raw, chatId) {
   if (!spindle.permissions.has("image_gen"))
     throw new Error("Grant QuickGen the Image Generation permission in Spindle.");
@@ -195,11 +229,14 @@ async function start(userId, raw, chatId) {
   if (jobs.get(userId)?.status === "running" || jobs.get(userId)?.status === "cancelling")
     throw new Error("Wait for the current QuickGen job or cancel it.");
   const selection = normalizeSettings(raw);
+  if (selection.outputTarget === "chat_attachment" && !spindle.permissions.has("chat_mutation"))
+    throw new Error("Grant QuickGen the Chat Mutation permission or choose Preview Only.");
   const { kind, step } = selection;
   const previous = await lastJob(userId);
   if (jobs.get(userId)?.status === "running" || jobs.get(userId)?.status === "cancelling")
     throw new Error("QuickGen is already running.");
-  const job = { id: crypto.randomUUID(), chatId, recipeName: "QuickGen", mode: kind, phase: kind, status: "running", startedAt: Date.now(), image: kind === "video" ? previous?.image : undefined };
+  const previousImage = previous?.image ? { ...previous.image, chatId: previous.image.chatId ?? previous.chatId } : undefined;
+  const job = { id: crypto.randomUUID(), chatId, recipeName: "QuickGen", mode: kind, phase: kind, status: "running", startedAt: Date.now(), image: kind === "video" ? previousImage : undefined };
   jobs.set(userId, job);
   const cancelled = () => job.status === "cancelling";
   try {
@@ -219,8 +256,15 @@ async function start(userId, raw, chatId) {
         const generated = await spindle.imageGen.generateNative({ ...input, userId });
         if (!generated.generated || !generated.imageId)
           throw new Error(generated.reason || "The workflow returned no saved output.");
-        const result = { imageId: generated.imageId, mediaUrl: generated.mediaUrl ?? generated.imageUrl, mediaType: generated.mediaType ?? kind, mimeType: generated.mimeType ?? (kind === "video" ? "video/mp4" : "image/png"), prompt: generated.prompt, jobId: generated.jobId };
+        const result = { imageId: generated.imageId, mediaUrl: generated.mediaUrl ?? generated.imageUrl, mediaType: generated.mediaType ?? kind, mimeType: generated.mimeType ?? (kind === "video" ? "video/mp4" : "image/png"), prompt: generated.prompt, jobId: generated.jobId, chatId };
         job[kind] = result;
+        if (!cancelled() && selection.outputTarget === "chat_attachment") {
+          try {
+            await insertResult(userId, job, kind);
+          } catch (error) {
+            result.chatError = error instanceof Error ? error.message : String(error);
+          }
+        }
         job.status = cancelled() ? "cancelled" : "complete";
       } catch (error) {
         job.error = error instanceof Error ? error.message : String(error);
@@ -259,6 +303,26 @@ spindle.onFrontendMessage(async (payload, userId) => {
       case "qg_start":
         result = await start(userId, message.selection, message.chatId);
         break;
+      case "qg_insert": {
+        const job = await lastJob(userId);
+        if (!job || job.id !== message.jobId)
+          throw new Error("This result is no longer current. Refresh QuickGen.");
+        if (message.kind !== "image" && message.kind !== "video")
+          throw new Error("Choose an image or video result.");
+        if (job.status === "running" || job.status === "cancelling")
+          throw new Error("Wait for this generation to finish before inserting.");
+        jobs.set(userId, job);
+        try {
+          await insertResult(userId, job, message.kind);
+        } finally {
+          if (jobs.get(userId)?.id === job.id) {
+            await spindle.userStorage.setJson(LAST_PATH, job, { userId });
+            send(userId, { type: "qg_job", job });
+          }
+        }
+        result = job;
+        break;
+      }
       case "qg_cancel": {
         const job = jobs.get(userId);
         if (!job || job.status !== "running") {

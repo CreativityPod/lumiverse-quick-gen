@@ -20,6 +20,7 @@ export function setup(ctx: SpindleFrontendContext) {
   let error = ''
   let disposed = false
   let starting = false
+  const inserting = new Set<string>()
   let saveTimer: ReturnType<typeof setTimeout> | undefined
   const pending = new Map<string, { resolve: (value: unknown) => void; reject: (reason: Error) => void; timer: ReturnType<typeof setTimeout> }>()
   function request<T>(type: string, payload: Record<string, unknown> = {}): Promise<T> {
@@ -107,7 +108,15 @@ export function setup(ctx: SpindleFrontendContext) {
       step.workflowId = value; step.fields = {}; step.outputNodeId = ''; changed(); render()
     })))
     panel.append(control('Main Preset', select([{ value: '', label: 'Use active Main Preset' }, ...(state!.catalog?.presets ?? []).map((p) => ({ value: p.id, label: p.name }))], step.presetId, (value) => { step.presetId = value; changed() })))
-    panel.append(control('Output', select([{ value: 'image', label: 'Image' }, { value: 'video', label: 'Video' }], kind, (value) => { draft!.kind = value as MediaKind; changed(); render() })))
+    panel.append(control('Media type', select([{ value: 'image', label: 'Image' }, { value: 'video', label: 'Video' }], kind, (value) => { draft!.kind = value as MediaKind; changed(); render() })))
+    const output = control('Output', select([
+      { value: 'chat_attachment', label: 'Insert into chat' },
+      { value: 'preview', label: 'Preview only' },
+    ], draft!.outputTarget ?? 'preview', (value) => { draft!.outputTarget = value === 'chat_attachment' ? 'chat_attachment' : 'preview'; changed(); render() }))
+    output.append(el('small', draft!.outputTarget === 'chat_attachment'
+      ? 'Insert the generated image or video into the chat where this run starts.'
+      : 'Preview the result here. You can insert it into chat afterward.'))
+    panel.append(output)
     if (acceptsSource) {
       const sourceItems = [{ value: 'none', label: 'Use workflow image fields / no override' }, { value: 'last', label: 'Previous QuickGen image' }, ...state!.assets.map((asset) => ({ value: asset.id, label: asset.original_filename || asset.id }))]
       panel.append(control('Source image override', select(sourceItems, step.source, (value) => { step.source = value; changed(); render() })))
@@ -153,9 +162,25 @@ export function setup(ctx: SpindleFrontendContext) {
     if (!draft || !state) return
     starting = true; error = ''; renderStatus()
     try {
+      if (draft.outputTarget === 'chat_attachment') await ensureChatPermission()
       await save()
       state.job = await request<Job>('qg_start', { selection: clone(draft), chatId: ctx.getActiveChat().chatId })
     } finally { starting = false; renderStatus() }
+  }
+  async function ensureChatPermission() {
+    if ((await ctx.permissions.getGranted()).includes('chat_mutation')) return
+    const granted = await ctx.permissions.request(['chat_mutation'])
+    if (!granted.includes('chat_mutation')) throw new Error('Grant QuickGen the Chat Mutation permission or choose Preview only.')
+  }
+  async function insertIntoChat(job: Job, kind: MediaKind) {
+    const key = `${job.id}:${kind}`
+    if (inserting.has(key)) return
+    inserting.add(key); error = ''; renderStatus()
+    try {
+      await ensureChatPermission()
+      const updated = await request<Job>('qg_insert', { jobId: job.id, kind })
+      if (state?.job?.id === updated.id) state.job = updated
+    } finally { inserting.delete(key); renderStatus() }
   }
   function renderStatus() {
     if (!statusRoot || disposed) return
@@ -165,7 +190,7 @@ export function setup(ctx: SpindleFrontendContext) {
     tab.setBadge(busy ? '…' : null)
     const actions = el('div', '', 'qg-actions')
     const generateButton = button(`Generate ${draft?.kind ?? 'video'}`, generate, 'qg-primary')
-    generateButton.disabled = busy || !state?.supported || !state.catalog?.connections.length
+    generateButton.disabled = busy || inserting.size > 0 || !state?.supported || !state.catalog?.connections.length
     actions.append(generateButton)
     if (busy && !starting) actions.append(button('Cancel', async () => { await request('qg_cancel') }, 'qg-danger'))
     statusRoot.append(actions)
@@ -193,7 +218,17 @@ export function setup(ctx: SpindleFrontendContext) {
       else media.alt = `QuickGen ${kind} result`
       const caption = el('figcaption')
       const link = el('a', `Open ${kind}`); link.href = result.mediaUrl; link.target = '_blank'; link.rel = 'noopener'
-      caption.append(link)
+      const resultActions = el('div', '', 'qg-result-actions')
+      const isInserting = inserting.has(`${job!.id}:${kind}`)
+      const insert = button(result.chatMessageId ? 'Inserted into chat' : isInserting ? 'Inserting…' : 'Insert into chat', () => insertIntoChat(job!, kind))
+      insert.disabled = !!result.chatMessageId || isInserting || busy
+      resultActions.append(link, insert)
+      caption.append(resultActions)
+      if ((result.chatId ?? job!.chatId) !== ctx.getActiveChat().chatId) caption.append(el('small', 'Inserts into the original chat.'))
+      if (result.chatError) {
+        const warning = el('p', `Generated successfully, but could not insert into chat: ${result.chatError}`)
+        warning.setAttribute('role', 'alert'); caption.append(warning)
+      }
       const prompt = el('details'); prompt.append(el('summary', 'Resolved prompt'), el('p', result.prompt)); caption.append(prompt)
       figure.append(media, caption); results.append(figure)
     }
@@ -204,7 +239,7 @@ export function setup(ctx: SpindleFrontendContext) {
     root.replaceChildren()
     root.append(el('h2', 'QuickGen'), el('p', 'Choose an existing ComfyUI workflow, Main Preset, and field values. Generate one image or video at a time.'))
     if (!state || !draft) { root.append(el('p', error || 'Loading QuickGen…')); return }
-    if (!state.supported) root.append(el('p', 'Apply the included Lumiverse core patch and restart to enable QuickGen.'))
+    if (!state.supported) root.append(el('p', 'QuickGen requires Lumiverse v1.2.4 or newer with the QuickGen APIs. Use a build containing those changes and restart Lumiverse.'))
     else if (!state.catalog) root.append(button('Grant generation permissions', async () => { await ctx.permissions.request(['image_gen', 'images']); await refresh() }))
     const toolbar = el('div', '', 'qg-toolbar')
     toolbar.append(button('Refresh', async () => { await save(); await refresh() }))

@@ -1,4 +1,4 @@
-// QuickGen 0.1.3 — generated from src/.
+// QuickGen 0.1.4 — generated from src/.
 
 // src/model.ts
 function workflows(connection) {
@@ -53,6 +53,7 @@ var styles = `
 .qg-status {border:1px solid var(--qg-border); border-radius:10px; padding:12px; margin-top:12px; font-size:12px; line-height:1.6} .qg-status[role=alert] {color:#f6a6a6; border-color:rgba(230,110,110,.4)}
 .qg progress {width:100%; height:6px; accent-color:#62bdce; margin-top:8px} .qg-results {display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; margin-top:14px}
 .qg-results figure {margin:0; overflow:hidden; border:1px solid var(--qg-border); border-radius:10px} .qg-results img,.qg-results video {width:100%; max-height:360px; object-fit:contain; display:block; background:rgba(0,0,0,.2)} .qg-results figcaption {padding:10px; font-size:12px}
+.qg-result-actions {display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px; margin-bottom:6px} .qg label>small {display:block; margin-top:5px; line-height:1.5}
 .qg a {color:#80ccda} .qg footer {margin-top:16px; color:var(--qg-muted); font-size:11px} .qg .qg-saved {color:var(--qg-muted); font-size:11px}
 @media(max-width:700px) {.qg{padding:12px}}
 `;
@@ -75,6 +76,7 @@ function setup(ctx) {
   let error = "";
   let disposed = false;
   let starting = false;
+  const inserting = new Set;
   let saveTimer;
   const pending = new Map;
   function request(type, payload = {}) {
@@ -131,7 +133,7 @@ function setup(ctx) {
     wrapper.append(el("span", label), node);
     return wrapper;
   }
-  function select(items, value, changed2) {
+  function select(items, value, changed) {
     const node = el("select");
     for (const item of items) {
       const option = el("option", item.label);
@@ -144,7 +146,7 @@ function setup(ctx) {
       node.append(missing);
     }
     node.value = value;
-    node.onchange = () => changed2(node.value);
+    node.onchange = () => changed(node.value);
     return node;
   }
   function defaultSelection(step) {
@@ -203,11 +205,21 @@ function setup(ctx) {
       step.presetId = value;
       changed();
     })));
-    panel.append(control("Output", select([{ value: "image", label: "Image" }, { value: "video", label: "Video" }], kind, (value) => {
+    panel.append(control("Media type", select([{ value: "image", label: "Image" }, { value: "video", label: "Video" }], kind, (value) => {
       draft.kind = value;
       changed();
       render();
     })));
+    const output = control("Output", select([
+      { value: "chat_attachment", label: "Insert into chat" },
+      { value: "preview", label: "Preview only" }
+    ], draft.outputTarget ?? "preview", (value) => {
+      draft.outputTarget = value === "chat_attachment" ? "chat_attachment" : "preview";
+      changed();
+      render();
+    }));
+    output.append(el("small", draft.outputTarget === "chat_attachment" ? "Insert the generated image or video into the chat where this run starts." : "Preview the result here. You can insert it into chat afterward."));
+    panel.append(output);
     if (acceptsSource) {
       const sourceItems = [{ value: "none", label: "Use workflow image fields / no override" }, { value: "last", label: "Previous QuickGen image" }, ...state.assets.map((asset) => ({ value: asset.id, label: asset.original_filename || asset.id }))];
       panel.append(control("Source image override", select(sourceItems, step.source, (value) => {
@@ -226,13 +238,13 @@ function setup(ctx) {
       fields.append(el("small", "Map CUSTOM FIELDS in ImgGen when importing the workflow to expose more controls here."));
     for (const field of controls) {
       const value = Object.hasOwn(step.fields, field.key) ? step.fields[field.key] : field.value;
-      const update = (value2) => {
-        step.fields[field.key] = value2;
+      const update = (value) => {
+        step.fields[field.key] = value;
         changed();
       };
       let node;
       if (field.options.length) {
-        node = select(field.options.map((value2) => ({ value: value2, label: value2 })), String(value), (value2) => update(typeof field.value === "number" ? Number(value2) : typeof field.value === "boolean" ? value2 === "true" : value2));
+        node = select(field.options.map((value) => ({ value, label: value })), String(value), (value) => update(typeof field.value === "number" ? Number(value) : typeof field.value === "boolean" ? value === "true" : value));
       } else if (typeof field.value === "boolean") {
         const input = el("input");
         input.type = "checkbox";
@@ -299,10 +311,36 @@ function setup(ctx) {
     error = "";
     renderStatus();
     try {
+      if (draft.outputTarget === "chat_attachment")
+        await ensureChatPermission();
       await save();
       state.job = await request("qg_start", { selection: clone(draft), chatId: ctx.getActiveChat().chatId });
     } finally {
       starting = false;
+      renderStatus();
+    }
+  }
+  async function ensureChatPermission() {
+    if ((await ctx.permissions.getGranted()).includes("chat_mutation"))
+      return;
+    const granted = await ctx.permissions.request(["chat_mutation"]);
+    if (!granted.includes("chat_mutation"))
+      throw new Error("Grant QuickGen the Chat Mutation permission or choose Preview only.");
+  }
+  async function insertIntoChat(job, kind) {
+    const key = `${job.id}:${kind}`;
+    if (inserting.has(key))
+      return;
+    inserting.add(key);
+    error = "";
+    renderStatus();
+    try {
+      await ensureChatPermission();
+      const updated = await request("qg_insert", { jobId: job.id, kind });
+      if (state?.job?.id === updated.id)
+        state.job = updated;
+    } finally {
+      inserting.delete(key);
       renderStatus();
     }
   }
@@ -315,7 +353,7 @@ function setup(ctx) {
     tab.setBadge(busy ? "…" : null);
     const actions = el("div", "", "qg-actions");
     const generateButton = button(`Generate ${draft?.kind ?? "video"}`, generate, "qg-primary");
-    generateButton.disabled = busy || !state?.supported || !state.catalog?.connections.length;
+    generateButton.disabled = busy || inserting.size > 0 || !state?.supported || !state.catalog?.connections.length;
     actions.append(generateButton);
     if (busy && !starting)
       actions.append(button("Cancel", async () => {
@@ -359,7 +397,19 @@ function setup(ctx) {
       link.href = result.mediaUrl;
       link.target = "_blank";
       link.rel = "noopener";
-      caption.append(link);
+      const resultActions = el("div", "", "qg-result-actions");
+      const isInserting = inserting.has(`${job.id}:${kind}`);
+      const insert = button(result.chatMessageId ? "Inserted into chat" : isInserting ? "Inserting…" : "Insert into chat", () => insertIntoChat(job, kind));
+      insert.disabled = !!result.chatMessageId || isInserting || busy;
+      resultActions.append(link, insert);
+      caption.append(resultActions);
+      if ((result.chatId ?? job.chatId) !== ctx.getActiveChat().chatId)
+        caption.append(el("small", "Inserts into the original chat."));
+      if (result.chatError) {
+        const warning = el("p", `Generated successfully, but could not insert into chat: ${result.chatError}`);
+        warning.setAttribute("role", "alert");
+        caption.append(warning);
+      }
       const prompt = el("details");
       prompt.append(el("summary", "Resolved prompt"), el("p", result.prompt));
       caption.append(prompt);
@@ -378,7 +428,7 @@ function setup(ctx) {
       return;
     }
     if (!state.supported)
-      root.append(el("p", "Apply the included Lumiverse core patch and restart to enable QuickGen."));
+      root.append(el("p", "QuickGen requires Lumiverse v1.2.4 or newer with the QuickGen APIs. Use a build containing those changes and restart Lumiverse."));
     else if (!state.catalog)
       root.append(button("Grant generation permissions", async () => {
         await ctx.permissions.request(["image_gen", "images"]);
