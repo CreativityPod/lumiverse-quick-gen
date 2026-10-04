@@ -6,6 +6,8 @@ async function harness() {
   const messages: any[] = []
   const generated: any[] = []
   const posts: any[] = []
+  const edits: any[] = []
+  const chatMessages: any[] = [{ id: 'last', content: 'Original message', metadata: { keep: true }, extra: { attachments: [{ id: 'existing' }] } }]
   let allowed = true
   let postingFails = false
   let releaseGeneration: (() => void) | undefined
@@ -30,7 +32,14 @@ async function harness() {
         return { generated: true, imageId: `asset-${generated.length}`, mediaUrl: '/asset', mediaType: input.output_media_type, prompt: 'resolved' }
       },
     },
-    chat: { appendMessage: async (...args: any[]) => {
+    chat: {
+      getMessages: async () => structuredClone(chatMessages),
+      updateMessage: async (...args: any[]) => {
+        edits.push(args)
+        if (postingFails) throw new Error('Chat is unavailable')
+        Object.assign(chatMessages.find((message) => message.id === args[1]), args[2])
+      },
+      appendMessage: async (...args: any[]) => {
       posts.push(args)
       await Bun.sleep(5)
       if (postingFails) throw new Error('Chat is unavailable')
@@ -62,7 +71,7 @@ async function harness() {
   async function start(kind = 'image', outputTarget = 'preview', chatId = 'original-chat') {
     return send('qg_start', { chatId, selection: { kind, outputTarget, step: { ...emptyStep(kind as 'image' | 'video'), connectionId: 'conn', workflowId: 'wf' } } })
   }
-  return { posts, generated, storage, send, start, settle, load,
+  return { posts, edits, chatMessages, generated, storage, send, start, settle, load,
     allow: (value: boolean) => { allowed = value }, failPosting: (value: boolean) => { postingFails = value },
     pause: () => { pauseGeneration = true }, release: () => releaseGeneration?.(),
   }
@@ -123,10 +132,66 @@ test('an image retained for a later video still inserts into its own original ch
   expect(h.posts.map((post) => post[0])).toEqual(['original-chat', 'new-chat'])
 })
 
-test('a result arriving after cancellation is not automatically posted', async () => {
+test.each(['chat_attachment', 'attach_to_message'])('cancelled generation is not automatically posted: %s', async (target) => {
   const h = await harness(); h.pause()
-  await h.start('image', 'chat_attachment')
+  await h.start('image', target)
   await h.send('qg_cancel'); h.release()
   expect((await h.settle()).status).toBe('cancelled')
-  expect(h.posts).toHaveLength(0)
+  expect(h.posts).toHaveLength(0); expect(h.edits).toHaveLength(0)
+})
+
+
+test.each(['image', 'video'])('attach %s captures the original last message and preserves content and attachments', async (kind) => {
+  const h = await harness(); h.pause()
+  await h.start(kind, 'attach_to_message')
+  h.chatMessages[0].content = 'Edited during generation'
+  h.chatMessages.push({ id: 'new-reply', content: 'Later reply' })
+  h.release()
+  const job = await h.settle()
+  expect(job.status).toBe('complete'); expect(h.posts).toHaveLength(0)
+  expect(h.edits).toHaveLength(1)
+  expect(h.edits[0].slice(0, 2)).toEqual(['original-chat', 'last'])
+  expect(Object.keys(h.edits[0][2])).toEqual(['content'])
+  expect(h.chatMessages[0].content).toStartWith('Edited during generation\n\n')
+  expect(h.chatMessages[0].content).toContain(kind === 'image' ? '<img ' : '<video ')
+  expect(h.chatMessages[0].metadata).toEqual({ keep: true })
+  expect(h.chatMessages[0].extra.attachments).toEqual([{ id: 'existing' }])
+  expect(h.chatMessages[1].content).toBe('Later reply')
+  expect(job[kind as 'image' | 'video']?.chatOutputTarget).toBe('attach_to_message')
+})
+
+test('attachment preflight rejects empty chat and missing permission before generation', async () => {
+  const h = await harness(); h.allow(false)
+  expect((await h.start('image', 'attach_to_message')).error).toContain('Chat Mutation')
+  h.allow(true); h.chatMessages.length = 0
+  expect((await h.start('image', 'attach_to_message')).error).toContain('No message to attach')
+  expect(h.generated).toHaveLength(0)
+})
+
+test('deleted attachment target keeps media and never falls back to a newer message', async () => {
+  const h = await harness(); h.pause()
+  await h.start('image', 'attach_to_message')
+  h.chatMessages.splice(0, 1, { id: 'other', content: 'Other message' })
+  h.release(); const job = await h.settle()
+  expect(job.status).toBe('complete')
+  expect(job.image?.chatError).toContain('no longer exists')
+  expect(h.edits).toHaveLength(0)
+  await h.send('qg_insert', { jobId: job.id, kind: 'image', outputTarget: 'attach_to_message' })
+  expect(h.edits).toHaveLength(0)
+})
+
+test('manual attachment retry retains destination, deduplicates and survives reload', async () => {
+  const h = await harness()
+  await h.start(); const job = await h.settle()
+  h.failPosting(true)
+  const payload = { jobId: job.id, kind: 'image', outputTarget: 'attach_to_message', chatId: 'wrong' }
+  expect((await h.send('qg_insert', payload)).ok).toBe(false)
+  h.chatMessages.push({ id: 'new-reply', content: 'Later reply' })
+  h.failPosting(false)
+  await Promise.all([h.send('qg_insert', payload), h.send('qg_insert', payload)])
+  expect(h.edits).toHaveLength(2)
+  expect(h.edits[1].slice(0, 2)).toEqual(['original-chat', 'last'])
+  await h.load(); await h.send('qg_insert', payload)
+  expect(h.edits).toHaveLength(2)
+  expect(h.generated).toHaveLength(1)
 })

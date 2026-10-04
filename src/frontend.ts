@@ -1,5 +1,5 @@
 import type { SpindleFrontendContext } from 'lumiverse-spindle-types'
-import { fieldControls, supportsSourceImage, workflows, type Asset, type Catalog, type Job, type MediaKind, type Scalar, type Settings, type Step } from './model'
+import { fieldControls, supportsSourceImage, workflows, type Asset, type Catalog, type Job, type MediaKind, type OutputTarget, type Scalar, type Settings, type Step } from './model'
 import { styles } from './styles'
 interface Bootstrap { supported: boolean; settings: Settings; catalog: Catalog | null; assets: Asset[]; job: Job | null }
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
@@ -72,7 +72,9 @@ export function setup(ctx: SpindleFrontendContext) {
     }
     node.value = value
     node.onchange = () => changed(node.value)
-    return node
+    const wrapper = el('span', '', 'qg-select')
+    wrapper.append(node)
+    return wrapper
   }
   function defaultSelection(step: Step) {
     if (!state?.catalog) return
@@ -111,11 +113,14 @@ export function setup(ctx: SpindleFrontendContext) {
     panel.append(control('Media type', select([{ value: 'image', label: 'Image' }, { value: 'video', label: 'Video' }], kind, (value) => { draft!.kind = value as MediaKind; changed(); render() })))
     const output = control('Output', select([
       { value: 'chat_attachment', label: 'Insert into chat' },
+      { value: 'attach_to_message', label: 'Attach to last message' },
       { value: 'preview', label: 'Preview only' },
-    ], draft!.outputTarget ?? 'preview', (value) => { draft!.outputTarget = value === 'chat_attachment' ? 'chat_attachment' : 'preview'; changed(); render() }))
+    ], draft!.outputTarget ?? 'preview', (value) => { draft!.outputTarget = value as OutputTarget; changed(); render() }))
     output.append(el('small', draft!.outputTarget === 'chat_attachment'
       ? 'Insert the generated image or video into the chat where this run starts.'
-      : 'Preview the result here. You can insert it into chat afterward.'))
+      : draft!.outputTarget === 'attach_to_message'
+        ? 'Attach to the last message in this chat when generation starts.'
+        : 'Preview the result here. You can insert or attach it afterward.'))
     panel.append(output)
     if (acceptsSource) {
       const sourceItems = [{ value: 'none', label: 'Use workflow image fields / no override' }, { value: 'last', label: 'Previous QuickGen image' }, ...state!.assets.map((asset) => ({ value: asset.id, label: asset.original_filename || asset.id }))]
@@ -139,7 +144,7 @@ export function setup(ctx: SpindleFrontendContext) {
         const input = el('input'); input.type = typeof field.value === 'number' ? 'number' : 'text'; input.step = 'any'; input.value = String(value)
         input.onchange = () => update(typeof field.value === 'number' ? Number(input.value) : input.value); node = input
       }
-      if (field.semantic === 'init_image' && step.source !== 'none') (node as HTMLInputElement | HTMLSelectElement).disabled = true
+      if (field.semantic === 'init_image' && step.source !== 'none') (node.querySelector('select') ?? node as HTMLInputElement).disabled = true
       fields.append(control(field.label, node))
     }
     panel.append(fields)
@@ -162,7 +167,7 @@ export function setup(ctx: SpindleFrontendContext) {
     if (!draft || !state) return
     starting = true; error = ''; renderStatus()
     try {
-      if (draft.outputTarget === 'chat_attachment') await ensureChatPermission()
+      if (draft.outputTarget && draft.outputTarget !== 'preview') await ensureChatPermission()
       await save()
       state.job = await request<Job>('qg_start', { selection: clone(draft), chatId: ctx.getActiveChat().chatId })
     } finally { starting = false; renderStatus() }
@@ -172,13 +177,13 @@ export function setup(ctx: SpindleFrontendContext) {
     const granted = await ctx.permissions.request(['chat_mutation'])
     if (!granted.includes('chat_mutation')) throw new Error('Grant QuickGen the Chat Mutation permission or choose Preview only.')
   }
-  async function insertIntoChat(job: Job, kind: MediaKind) {
+  async function insertIntoChat(job: Job, kind: MediaKind, outputTarget: Exclude<OutputTarget, 'preview'> = 'chat_attachment') {
     const key = `${job.id}:${kind}`
     if (inserting.has(key)) return
     inserting.add(key); error = ''; renderStatus()
     try {
       await ensureChatPermission()
-      const updated = await request<Job>('qg_insert', { jobId: job.id, kind })
+      const updated = await request<Job>('qg_insert', { jobId: job.id, kind, outputTarget })
       if (state?.job?.id === updated.id) state.job = updated
     } finally { inserting.delete(key); renderStatus() }
   }
@@ -220,13 +225,18 @@ export function setup(ctx: SpindleFrontendContext) {
       const link = el('a', `Open ${kind}`); link.href = result.mediaUrl; link.target = '_blank'; link.rel = 'noopener'
       const resultActions = el('div', '', 'qg-result-actions')
       const isInserting = inserting.has(`${job!.id}:${kind}`)
-      const insert = button(result.chatMessageId ? 'Inserted into chat' : isInserting ? 'Inserting…' : 'Insert into chat', () => insertIntoChat(job!, kind))
-      insert.disabled = !!result.chatMessageId || isInserting || busy
+      const insert = button(result.chatMessageId ? result.chatOutputTarget === 'attach_to_message' ? 'Attached to message' : 'Inserted into chat' : isInserting ? 'Inserting…' : 'Insert into chat', () => insertIntoChat(job!, kind))
+      insert.disabled = !!result.chatMessageId || inserting.size > 0 || busy
       resultActions.append(link, insert)
+      if (!result.chatMessageId) {
+        const attach = button(isInserting ? 'Posting…' : 'Attach to last message', () => insertIntoChat(job!, kind, 'attach_to_message'))
+        attach.disabled = inserting.size > 0 || busy
+        resultActions.append(attach)
+      }
       caption.append(resultActions)
       if ((result.chatId ?? job!.chatId) !== ctx.getActiveChat().chatId) caption.append(el('small', 'Inserts into the original chat.'))
       if (result.chatError) {
-        const warning = el('p', `Generated successfully, but could not insert into chat: ${result.chatError}`)
+        const warning = el('p', `Generated successfully, but could not post to chat: ${result.chatError}`)
         warning.setAttribute('role', 'alert'); caption.append(warning)
       }
       const prompt = el('details'); prompt.append(el('summary', 'Resolved prompt'), el('p', result.prompt)); caption.append(prompt)

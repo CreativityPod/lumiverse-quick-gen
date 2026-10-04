@@ -84,7 +84,7 @@ test.each([{ dropdown: true, initial: true, custom: true }, { dropdown: false, i
   expect(root.querySelector('script')).toBeNull()
 })
 
-test.each([true, false])('ImgGen-style output selection and result insertion respect permission (granted=%s)', async (granted) => {
+test.each([{ granted: true, target: 'chat_attachment' }, { granted: false, target: 'chat_attachment' }, { granted: true, target: 'attach_to_message' }, { granted: false, target: 'attach_to_message' }])('output selection and result actions respect permission: %j', async ({ granted, target }) => {
   dom = new JSDOM('<div id="root"></div>', { url: 'http://localhost' })
   Object.assign(globalThis, { document: dom.window.document, HTMLElement: dom.window.HTMLElement, HTMLVideoElement: dom.window.HTMLVideoElement })
   const root = document.getElementById('root')!
@@ -108,32 +108,32 @@ test.each([true, false])('ImgGen-style output selection and result insertion res
       const result = request.type === 'qg_bootstrap' ? { supported: true, settings: saved, assets: [], job: null,
         catalog: { activeId: null, presets: [], connections: [{ id: 'conn', name: 'Comfy', provider: 'comfyui', metadata: {} }] } }
         : request.type === 'qg_save' ? saved
-        : request.type === 'qg_insert' ? { ...job, image: { ...job.image, chatMessageId: 'posted' } } : job
+        : request.type === 'qg_insert' ? { ...job, image: { ...job.image, chatMessageId: 'posted', chatOutputTarget: request.outputTarget } } : job
       queueMicrotask(() => onMessage({ requestId: request.requestId, ok: true, result }))
     },
   } as unknown as SpindleFrontendContext
   teardown = setup(ctx); await Bun.sleep(1)
   const output = [...root.querySelectorAll('label')].find((label) => label.querySelector('span')?.textContent === 'Output')!.querySelector('select')!
-  expect([...output.options].map((option) => option.textContent)).toEqual(['Insert into chat', 'Preview only'])
+  expect([...output.options].map((option) => option.textContent)).toEqual(['Insert into chat', 'Attach to last message', 'Preview only'])
   expect(output.value).toBe('preview')
-  output.value = 'chat_attachment'; output.dispatchEvent(new dom.window.Event('change'))
+  output.value = target; output.dispatchEvent(new dom.window.Event('change'))
   ;[...root.querySelectorAll('button')].find((button) => button.textContent === 'Generate image')!.click()
   await Bun.sleep(5)
   expect(permissions).toEqual([['chat_mutation']])
   if (granted) {
-    expect(requests.find((request) => request.type === 'qg_start').selection.outputTarget).toBe('chat_attachment')
-    expect(saved.outputTarget).toBe('chat_attachment')
+    expect(requests.find((request) => request.type === 'qg_start').selection.outputTarget).toBe(target)
+    expect(saved.outputTarget).toBe(target)
   } else expect(requests.some((request) => request.type === 'qg_start')).toBe(false)
 
   activeChat = 'another-chat'; onMessage({ type: 'qg_job', job })
   expect(root.textContent).toContain('Inserts into the original chat.')
-  const insert = [...root.querySelectorAll('button')].find((button) => button.textContent === 'Insert into chat')!
+  const insert = [...root.querySelectorAll('button')].find((button) => button.textContent === (target === 'attach_to_message' ? 'Attach to last message' : 'Insert into chat'))!
   insert.click(); insert.click(); await Bun.sleep(5)
   const inserts = requests.filter((request) => request.type === 'qg_insert')
   expect(inserts).toHaveLength(granted ? 1 : 0)
   if (granted) {
-    expect(inserts[0]).toMatchObject({ jobId: 'finished', kind: 'image' })
+    expect(inserts[0]).toMatchObject({ jobId: 'finished', kind: 'image', outputTarget: target })
     expect(inserts[0].chatId).toBeUndefined()
-    expect([...root.querySelectorAll('button')].find((button) => button.textContent === 'Inserted into chat')?.disabled).toBe(true)
+    expect([...root.querySelectorAll('button')].find((button) => button.textContent === (target === 'attach_to_message' ? 'Attached to message' : 'Inserted into chat'))?.disabled).toBe(true)
   } else expect(root.textContent).toContain('Chat Mutation')
 })

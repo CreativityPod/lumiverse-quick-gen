@@ -42,19 +42,27 @@ var styles = `
 .qg { --qg-border:var(--lumiverse-border,rgba(160,174,195,.23)); --qg-muted:var(--lumiverse-text-muted,#9aa6b8); color:var(--lumiverse-text,#e8edf5); font:inherit; padding:16px; box-sizing:border-box; max-width:640px; margin:auto; }
 .qg * {box-sizing:border-box} .qg h2 {font-size:18px; margin:0 0 6px} .qg p {margin:0 0 16px; color:var(--qg-muted); font-size:12px; line-height:1.6}
 .qg-toolbar,.qg-actions {display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:14px} .qg-toolbar select {flex:1; min-width:150px}
-.qg button,.qg input,.qg select,.qg textarea {font:inherit; color:inherit; background:var(--lumiverse-fill,#202a39); border:1px solid var(--qg-border); border-radius:7px; padding:9px 10px; min-height:36px}
-.qg input:not([type=checkbox]),.qg select,.qg textarea {width:100%; min-width:0} .qg textarea {min-height:72px; resize:vertical} .qg input[type=checkbox] {accent-color:#62bdce; min-height:0}
-.qg button {cursor:pointer; font-size:12px; white-space:nowrap} .qg button:hover {border-color:#62bdce} .qg button:disabled {opacity:.5; cursor:default}
-.qg button.qg-primary {background:var(--lumiverse-primary,#237d8e); color:white; border-color:transparent} .qg button.qg-danger {color:#f6a6a6}
+.qg button,.qg input,.qg select,.qg textarea {font:inherit; color:inherit; background:var(--lumiverse-bg,rgba(0,0,0,.2)); border:1px solid var(--qg-border); border-radius:8px; padding:10px 12px; font-size:calc(13px * var(--lumiverse-font-scale,1)); min-height:36px}
+.qg input:not([type=checkbox]),.qg select,.qg textarea {width:100%; min-width:0} .qg textarea {min-height:72px; resize:vertical; line-height:1.5} .qg input[type=checkbox] {accent-color:var(--lumiverse-primary,#a78bfa); min-height:0}
+.qg button {cursor:pointer; font-weight:500; padding:8px 14px; background:transparent; color:var(--qg-muted); white-space:nowrap} .qg button:hover {background:var(--lumiverse-fill-subtle); color:var(--lumiverse-text)} .qg button:disabled {opacity:.5; cursor:default}
+.qg button.qg-primary {background:var(--lumiverse-primary,#237d8e); color:var(--lumiverse-primary-contrast,#fff); border-color:var(--lumiverse-primary,#237d8e)} .qg button.qg-primary:hover {background:var(--lumiverse-primary-hover,var(--lumiverse-primary,#237d8e))} .qg button.qg-danger {color:var(--lumiverse-danger,#f6a6a6)}
 .qg-step {border:1px solid var(--qg-border); border-radius:10px; padding:14px; background:var(--lumiverse-fill-subtle,rgba(255,255,255,.025))}
 
-.qg label {display:block; font-size:12px; margin:0 0 12px} .qg label>span {display:block; margin-bottom:6px; color:var(--qg-muted)} .qg small {font-size:11px; color:var(--qg-muted)}
+.qg label {display:block; font-size:calc(13px * var(--lumiverse-font-scale,1)); margin:0 0 16px} .qg label>span {display:block; margin-bottom:6px; font-weight:500; color:var(--qg-muted)} .qg small {font-size:calc(11px * var(--lumiverse-font-scale,1)); color:var(--lumiverse-text-dim,var(--qg-muted))}
 .qg details {border-top:1px solid var(--qg-border); padding-top:12px; margin-top:12px} .qg summary {font-size:12px; cursor:pointer; margin-bottom:12px} .qg .qg-check {display:flex; gap:8px; align-items:center}
 .qg-status {border:1px solid var(--qg-border); border-radius:10px; padding:12px; margin-top:12px; font-size:12px; line-height:1.6} .qg-status[role=alert] {color:#f6a6a6; border-color:rgba(230,110,110,.4)}
-.qg progress {width:100%; height:6px; accent-color:#62bdce; margin-top:8px} .qg-results {display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; margin-top:14px}
+.qg progress {width:100%; height:6px; accent-color:var(--lumiverse-primary,#a78bfa); margin-top:8px} .qg-results {display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; margin-top:14px}
 .qg-results figure {margin:0; overflow:hidden; border:1px solid var(--qg-border); border-radius:10px} .qg-results img,.qg-results video {width:100%; max-height:360px; object-fit:contain; display:block; background:rgba(0,0,0,.2)} .qg-results figcaption {padding:10px; font-size:12px}
 .qg-result-actions {display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px; margin-bottom:6px} .qg label>small {display:block; margin-top:5px; line-height:1.5}
-.qg a {color:#80ccda} .qg footer {margin-top:16px; color:var(--qg-muted); font-size:11px} .qg .qg-saved {color:var(--qg-muted); font-size:11px}
+.qg a {color:var(--lumiverse-primary,#a78bfa)} .qg footer {margin-top:16px; color:var(--qg-muted); font-size:11px} .qg .qg-saved {color:var(--qg-muted); font-size:11px}
+/* Match ImgGen's FormComponents fields using the shared live theme tokens. */
+.qg input,.qg textarea {transition:border-color var(--lumiverse-transition-fast,.15s),box-shadow var(--lumiverse-transition-fast,.15s)}
+.qg input:focus,.qg textarea:focus {border-color:var(--lumiverse-primary-muted,#a78bfa); box-shadow:0 0 0 3px var(--lumiverse-primary-010,rgba(167,139,250,.1)); outline:none}
+.qg select {padding-right:32px; appearance:none; cursor:pointer; transition:border-color var(--lumiverse-transition-fast,.15s)}
+.qg select:focus {border-color:var(--lumiverse-primary-muted,#a78bfa); outline:none}
+.qg .qg-select {position:relative; margin:0; color:inherit; font-weight:400}
+.qg .qg-select::after {content:''; position:absolute; right:14px; top:50%; width:7px; height:7px; border-right:1.5px solid var(--qg-muted); border-bottom:1.5px solid var(--qg-muted); transform:translateY(-70%) rotate(45deg); pointer-events:none}
+.qg input:disabled,.qg select:disabled,.qg textarea:disabled {opacity:.5; cursor:not-allowed}
 @media(max-width:700px) {.qg{padding:12px}}
 `;
 
@@ -147,7 +155,9 @@ function setup(ctx) {
     }
     node.value = value;
     node.onchange = () => changed(node.value);
-    return node;
+    const wrapper = el("span", "", "qg-select");
+    wrapper.append(node);
+    return wrapper;
   }
   function defaultSelection(step) {
     if (!state?.catalog)
@@ -212,13 +222,14 @@ function setup(ctx) {
     })));
     const output = control("Output", select([
       { value: "chat_attachment", label: "Insert into chat" },
+      { value: "attach_to_message", label: "Attach to last message" },
       { value: "preview", label: "Preview only" }
     ], draft.outputTarget ?? "preview", (value) => {
-      draft.outputTarget = value === "chat_attachment" ? "chat_attachment" : "preview";
+      draft.outputTarget = value;
       changed();
       render();
     }));
-    output.append(el("small", draft.outputTarget === "chat_attachment" ? "Insert the generated image or video into the chat where this run starts." : "Preview the result here. You can insert it into chat afterward."));
+    output.append(el("small", draft.outputTarget === "chat_attachment" ? "Insert the generated image or video into the chat where this run starts." : draft.outputTarget === "attach_to_message" ? "Attach to the last message in this chat when generation starts." : "Preview the result here. You can insert or attach it afterward."));
     panel.append(output);
     if (acceptsSource) {
       const sourceItems = [{ value: "none", label: "Use workflow image fields / no override" }, { value: "last", label: "Previous QuickGen image" }, ...state.assets.map((asset) => ({ value: asset.id, label: asset.original_filename || asset.id }))];
@@ -260,7 +271,7 @@ function setup(ctx) {
         node = input;
       }
       if (field.semantic === "init_image" && step.source !== "none")
-        node.disabled = true;
+        (node.querySelector("select") ?? node).disabled = true;
       fields.append(control(field.label, node));
     }
     panel.append(fields);
@@ -311,7 +322,7 @@ function setup(ctx) {
     error = "";
     renderStatus();
     try {
-      if (draft.outputTarget === "chat_attachment")
+      if (draft.outputTarget && draft.outputTarget !== "preview")
         await ensureChatPermission();
       await save();
       state.job = await request("qg_start", { selection: clone(draft), chatId: ctx.getActiveChat().chatId });
@@ -327,7 +338,7 @@ function setup(ctx) {
     if (!granted.includes("chat_mutation"))
       throw new Error("Grant QuickGen the Chat Mutation permission or choose Preview only.");
   }
-  async function insertIntoChat(job, kind) {
+  async function insertIntoChat(job, kind, outputTarget = "chat_attachment") {
     const key = `${job.id}:${kind}`;
     if (inserting.has(key))
       return;
@@ -336,7 +347,7 @@ function setup(ctx) {
     renderStatus();
     try {
       await ensureChatPermission();
-      const updated = await request("qg_insert", { jobId: job.id, kind });
+      const updated = await request("qg_insert", { jobId: job.id, kind, outputTarget });
       if (state?.job?.id === updated.id)
         state.job = updated;
     } finally {
@@ -399,14 +410,19 @@ function setup(ctx) {
       link.rel = "noopener";
       const resultActions = el("div", "", "qg-result-actions");
       const isInserting = inserting.has(`${job.id}:${kind}`);
-      const insert = button(result.chatMessageId ? "Inserted into chat" : isInserting ? "Inserting…" : "Insert into chat", () => insertIntoChat(job, kind));
-      insert.disabled = !!result.chatMessageId || isInserting || busy;
+      const insert = button(result.chatMessageId ? result.chatOutputTarget === "attach_to_message" ? "Attached to message" : "Inserted into chat" : isInserting ? "Inserting…" : "Insert into chat", () => insertIntoChat(job, kind));
+      insert.disabled = !!result.chatMessageId || inserting.size > 0 || busy;
       resultActions.append(link, insert);
+      if (!result.chatMessageId) {
+        const attach = button(isInserting ? "Posting…" : "Attach to last message", () => insertIntoChat(job, kind, "attach_to_message"));
+        attach.disabled = inserting.size > 0 || busy;
+        resultActions.append(attach);
+      }
       caption.append(resultActions);
       if ((result.chatId ?? job.chatId) !== ctx.getActiveChat().chatId)
         caption.append(el("small", "Inserts into the original chat."));
       if (result.chatError) {
-        const warning = el("p", `Generated successfully, but could not insert into chat: ${result.chatError}`);
+        const warning = el("p", `Generated successfully, but could not post to chat: ${result.chatError}`);
         warning.setAttribute("role", "alert");
         caption.append(warning);
       }

@@ -130,7 +130,7 @@ function normalizeSettings(raw) {
   if (input?.kind !== "image" && input?.kind !== "video")
     throw new Error("Choose image or video output.");
   const recipe = normalizeRecipe({ id: "launcher", name: "QuickGen", [input.kind]: input.step });
-  return { kind: input.kind, step: recipe[input.kind], outputTarget: input.outputTarget === "chat_attachment" ? "chat_attachment" : "preview" };
+  return { kind: input.kind, step: recipe[input.kind], outputTarget: input.outputTarget === "chat_attachment" || input.outputTarget === "attach_to_message" ? input.outputTarget : "preview" };
 }
 function chatContent(result) {
   const url = `/api/v1/images/${encodeURIComponent(result.imageId)}`;
@@ -192,7 +192,7 @@ async function lastJob(userId) {
   }
   return stored;
 }
-async function insertResult(userId, job, kind) {
+async function insertResult(userId, job, kind, target = "chat_attachment") {
   if (!spindle.permissions.has("chat_mutation"))
     throw new Error("Grant QuickGen the Chat Mutation permission to insert into chat.");
   const result = job[kind];
@@ -201,17 +201,38 @@ async function insertResult(userId, job, kind) {
   if (result.chatMessageId)
     return;
   const key = `${userId}:${result.imageId}`;
+  if ([...insertions.keys()].some((entry) => entry.startsWith(`${userId}:`) && entry !== key))
+    throw new Error("Wait for the current chat output to finish.");
   let pending = insertions.get(key);
   if (!pending) {
-    pending = spindle.chat.appendMessage(result.chatId ?? job.chatId, {
-      role: "assistant",
-      content: chatContent(result),
-      metadata: { quickGen: { jobId: job.id, imageId: result.imageId, mediaType: result.mediaType } }
-    });
+    pending = (async () => {
+      const chatId = result.chatId ?? job.chatId;
+      const content = chatContent(result);
+      if (target === "attach_to_message") {
+        const messages = await spindle.chat.getMessages(chatId);
+        const message = result.attachToMessageId ? messages.find((entry) => entry.id === result.attachToMessageId) : messages.at(-1);
+        if (!message)
+          throw new Error(result.attachToMessageId ? "The target message no longer exists." : "No message to attach to. Send a message first.");
+        result.attachToMessageId = message.id;
+        if (!message.content.includes(content)) {
+          await spindle.chat.updateMessage(chatId, message.id, { content: `${message.content}${message.content ? `
+
+` : ""}${content}` });
+        }
+        return { id: message.id, target };
+      }
+      return { ...await spindle.chat.appendMessage(chatId, {
+        role: "assistant",
+        content,
+        metadata: { quickGen: { jobId: job.id, imageId: result.imageId, mediaType: result.mediaType } }
+      }), target };
+    })();
     insertions.set(key, pending);
   }
   try {
-    result.chatMessageId = (await pending).id;
+    const posted = await pending;
+    result.chatMessageId = posted.id;
+    result.chatOutputTarget = posted.target;
     delete result.chatError;
   } catch (error) {
     result.chatError = error instanceof Error ? error.message : String(error);
@@ -229,10 +250,12 @@ async function start(userId, raw, chatId) {
   if (jobs.get(userId)?.status === "running" || jobs.get(userId)?.status === "cancelling")
     throw new Error("Wait for the current QuickGen job or cancel it.");
   const selection = normalizeSettings(raw);
-  if (selection.outputTarget === "chat_attachment" && !spindle.permissions.has("chat_mutation"))
+  if (selection.outputTarget !== "preview" && !spindle.permissions.has("chat_mutation"))
     throw new Error("Grant QuickGen the Chat Mutation permission or choose Preview Only.");
   const { kind, step } = selection;
   const previous = await lastJob(userId);
+  if ([...insertions.keys()].some((entry) => entry.startsWith(`${userId}:`)))
+    throw new Error("Wait for the current chat output to finish.");
   if (jobs.get(userId)?.status === "running" || jobs.get(userId)?.status === "cancelling")
     throw new Error("QuickGen is already running.");
   const previousImage = previous?.image ? { ...previous.image, chatId: previous.image.chatId ?? previous.chatId } : undefined;
@@ -240,6 +263,13 @@ async function start(userId, raw, chatId) {
   jobs.set(userId, job);
   const cancelled = () => job.status === "cancelling";
   try {
+    if (selection.outputTarget === "attach_to_message") {
+      const messages = await spindle.chat.getMessages(chatId);
+      const last = messages.at(-1);
+      if (!last)
+        throw new Error("No message to attach to. Send a message first.");
+      job.attachToMessageId = last.id;
+    }
     const options = await catalog(userId);
     const connection = options.connections.find((entry) => entry.id === step.connectionId);
     const workflow = workflows(connection).find((entry) => entry.id === step.workflowId);
@@ -256,11 +286,11 @@ async function start(userId, raw, chatId) {
         const generated = await spindle.imageGen.generateNative({ ...input, userId });
         if (!generated.generated || !generated.imageId)
           throw new Error(generated.reason || "The workflow returned no saved output.");
-        const result = { imageId: generated.imageId, mediaUrl: generated.mediaUrl ?? generated.imageUrl, mediaType: generated.mediaType ?? kind, mimeType: generated.mimeType ?? (kind === "video" ? "video/mp4" : "image/png"), prompt: generated.prompt, jobId: generated.jobId, chatId };
+        const result = { imageId: generated.imageId, mediaUrl: generated.mediaUrl ?? generated.imageUrl, mediaType: generated.mediaType ?? kind, mimeType: generated.mimeType ?? (kind === "video" ? "video/mp4" : "image/png"), prompt: generated.prompt, jobId: generated.jobId, chatId, attachToMessageId: job.attachToMessageId };
         job[kind] = result;
-        if (!cancelled() && selection.outputTarget === "chat_attachment") {
+        if (!cancelled() && selection.outputTarget !== "preview") {
           try {
-            await insertResult(userId, job, kind);
+            await insertResult(userId, job, kind, selection.outputTarget);
           } catch (error) {
             result.chatError = error instanceof Error ? error.message : String(error);
           }
@@ -311,9 +341,12 @@ spindle.onFrontendMessage(async (payload, userId) => {
           throw new Error("Choose an image or video result.");
         if (job.status === "running" || job.status === "cancelling")
           throw new Error("Wait for this generation to finish before inserting.");
+        const target = message.outputTarget ?? "chat_attachment";
+        if (target !== "chat_attachment" && target !== "attach_to_message")
+          throw new Error("Choose a valid chat output.");
         jobs.set(userId, job);
         try {
-          await insertResult(userId, job, message.kind);
+          await insertResult(userId, job, message.kind, target);
         } finally {
           if (jobs.get(userId)?.id === job.id) {
             await spindle.userStorage.setJson(LAST_PATH, job, { userId });

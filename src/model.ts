@@ -17,12 +17,12 @@ export interface Step {
 }
 export interface Recipe { id: string; name: string; image: Step; video: Step }
 export interface LegacySettings { recipes: Recipe[]; selectedId: string }
-export type OutputTarget = 'preview' | 'chat_attachment'
+export type OutputTarget = 'preview' | 'chat_attachment' | 'attach_to_message'
 export interface Settings { kind: MediaKind; step: Step; outputTarget: OutputTarget }
 export interface Asset { id: string; url: string; mime_type: string; original_filename: string; owner_chat_id?: string | null }
-export interface Result { imageId: string; mediaUrl: string; mediaType: MediaKind; mimeType: string; prompt: string; jobId?: string; chatId?: string; chatMessageId?: string; chatError?: string }
+export interface Result { imageId: string; mediaUrl: string; mediaType: MediaKind; mimeType: string; prompt: string; jobId?: string; chatId?: string; chatMessageId?: string; chatOutputTarget?: Exclude<OutputTarget, 'preview'>; attachToMessageId?: string; chatError?: string }
 export interface Job {
-  id: string; chatId: string; recipeName: string; mode: MediaKind | 'sequence'
+  id: string; chatId: string; attachToMessageId?: string; recipeName: string; mode: MediaKind | 'sequence'
   phase: 'image' | 'video'; status: 'running' | 'cancelling' | 'cancelled' | 'complete' | 'failed'
   progress?: { step?: number; totalSteps?: number; nodeId?: string }
   image?: Result; video?: Result; error?: string; startedAt: number
@@ -132,7 +132,7 @@ export function normalizeSettings(raw: unknown): Settings {
   const input = raw as Partial<Settings> | null
   if (input?.kind !== 'image' && input?.kind !== 'video') throw new Error('Choose image or video output.')
   const recipe = normalizeRecipe({ id: 'launcher', name: 'QuickGen', [input.kind]: input.step })
-  return { kind: input.kind, step: recipe[input.kind], outputTarget: input.outputTarget === 'chat_attachment' ? 'chat_attachment' : 'preview' }
+  return { kind: input.kind, step: recipe[input.kind], outputTarget: input.outputTarget === 'chat_attachment' || input.outputTarget === 'attach_to_message' ? input.outputTarget : 'preview' }
 }
 
 /** Use the host's authenticated asset route, never HTML or URLs supplied by a client. */
