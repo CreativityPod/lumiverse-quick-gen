@@ -1,4 +1,4 @@
-// QuickGen 0.1.5 — generated from src/.
+// QuickGen 0.1.6 — generated from src/.
 
 // src/model.ts
 function workflows(connection) {
@@ -320,6 +320,11 @@ function setup(ctx) {
   async function generate() {
     if (!draft || !state)
       return;
+    const chatId = ctx.getActiveChat().chatId;
+    if (!chatId) {
+      renderStatus();
+      return;
+    }
     starting = true;
     error = "";
     renderStatus();
@@ -327,7 +332,12 @@ function setup(ctx) {
       if (draft.outputTarget && draft.outputTarget !== "preview")
         await ensureChatPermission();
       await save();
-      const started = await request("qg_start", { selection: clone(draft), chatId: ctx.getActiveChat().chatId });
+      const activeChatId = ctx.getActiveChat().chatId;
+      if (!activeChatId)
+        return;
+      if (activeChatId !== chatId)
+        throw new Error("The active chat changed. Generate again in the chat you want to use.");
+      const started = await request("qg_start", { selection: clone(draft), chatId });
       if (state.job?.id !== started.id)
         state.job = started;
     } finally {
@@ -365,11 +375,19 @@ function setup(ctx) {
     statusRoot.replaceChildren();
     const job = state?.job;
     const busy = starting || job?.status === "running" || job?.status === "cancelling";
+    const chatId = ctx.getActiveChat().chatId;
     tab.setBadge(busy ? "…" : null);
     const actions = el("div", "", "qg-actions");
     const generateButton = button(`Generate ${draft?.kind ?? "video"}`, generate, "qg-primary");
-    generateButton.disabled = busy || inserting.size > 0 || !state?.supported || !state.catalog?.connections.length;
+    generateButton.disabled = !chatId || busy || inserting.size > 0 || !state?.supported || !state.catalog?.connections.length;
     actions.append(generateButton);
+    if (!chatId) {
+      const hint = el("small", "Open a chat to generate.");
+      hint.id = "qg-chat-required";
+      generateButton.setAttribute("aria-describedby", hint.id);
+      generateButton.title = hint.textContent;
+      actions.append(hint);
+    }
     if (busy && !starting)
       actions.append(button("Cancel", async () => {
         await request("qg_cancel");
@@ -507,6 +525,7 @@ function setup(ctx) {
     render();
   }
   const offChat = ctx.events.on("CHAT_SWITCHED", () => renderStatus());
+  const offChatState = ctx.state?.subscribe("chat.active", () => renderStatus());
   const offConnections = ctx.events.on("IMAGE_GEN_CONNECTION_CHANGED", () => {
     if (savedLabel)
       savedLabel.textContent = "Connections changed · click Refresh";
@@ -526,6 +545,7 @@ function setup(ctx) {
     pending.clear();
     offBackend();
     offChat();
+    offChatState?.();
     offConnections();
     offAction();
     action.destroy();

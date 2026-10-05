@@ -7,6 +7,83 @@ import { emptyStep, type Catalog, type Job, type MediaKind, type OutputTarget, t
 let teardown: (() => void) | undefined
 let dom: JSDOM | undefined
 afterEach(() => { teardown?.(); dom?.window.close() })
+test.each((['image', 'video'] as const).flatMap((kind) => [true, false].map((selectors) => ({ kind, selectors }))))('generation requires an active chat across navigation and startup races: %j', async ({ kind, selectors }) => {
+  dom = new JSDOM('<div id="root"></div>', { url: 'http://localhost' })
+  Object.assign(globalThis, { document: dom.window.document, HTMLElement: dom.window.HTMLElement, HTMLVideoElement: dom.window.HTMLVideoElement })
+  const root = document.getElementById('root')!
+  const settings: Settings = { kind, outputTarget: 'chat_attachment', step: emptyStep(kind) }
+  const requests: any[] = []
+  const permissions: string[][] = []
+  const events = new Map<string, () => void>()
+  let chatId: string | null = null
+  let onMessage: (message: unknown) => void = () => {}
+  let onChatState: (() => void) | undefined
+  let pauseSave = true
+  let releaseSave: (() => void) | undefined
+  const ctx = {
+    ui: { registerDrawerTab: () => ({ root, setBadge: () => {}, activate: () => {}, destroy: () => {} }), registerInputBarAction: () => ({ onClick: () => () => {}, destroy: () => {} }) },
+    dom: { addStyle: () => () => {} },
+    events: { on: (event: string, callback: () => void) => { events.set(event, callback); return () => { events.delete(event) } } },
+    state: selectors ? { subscribe: (selector: string, callback: () => void) => {
+      expect(selector).toBe('chat.active'); onChatState = callback; return () => { onChatState = undefined }
+    } } : undefined,
+    permissions: { getGranted: async () => [], request: async (requested: string[]) => { permissions.push(requested); return requested } },
+    getActiveChat: () => ({ chatId, characterId: chatId ? 'char' : null }),
+    onBackendMessage: (callback: typeof onMessage) => { onMessage = callback; return () => {} },
+    sendToBackend: (request: any) => {
+      requests.push(request)
+      const reply = () => onMessage({ requestId: request.requestId, ok: true, result: request.type === 'qg_bootstrap'
+        ? { supported: true, settings, assets: [], job: null, catalog: { activeId: null, activeConnectionId: null, presets: [], connections: [{ id: 'conn', name: 'Comfy', provider: 'comfyui', metadata: {} }] } }
+        : request.type === 'qg_save' ? request.selection
+        : { id: 'new', chatId: request.chatId, mode: kind, phase: kind, status: 'running', recipeName: 'Comfy', startedAt: 1 } })
+      if (request.type === 'qg_save' && pauseSave) releaseSave = reply
+      else queueMicrotask(reply)
+    },
+  } as unknown as SpindleFrontendContext
+  const notifyChat = () => selectors ? onChatState?.() : events.get('CHAT_SWITCHED')?.()
+  const generateButton = () => [...root.querySelectorAll('button')].find((button) => button.textContent === `Generate ${kind}`)!
+  teardown = setup(ctx); await Bun.sleep(1)
+  expect(generateButton().disabled).toBe(true)
+  expect(root.textContent).toContain('Open a chat to generate.')
+  expect(generateButton().getAttribute('aria-describedby')).toBe('qg-chat-required')
+
+  chatId = 'original'; notifyChat()
+  expect(generateButton().disabled).toBe(false)
+  expect(root.textContent).not.toContain('Open a chat to generate.')
+  chatId = null; notifyChat()
+  expect(generateButton().disabled).toBe(true)
+
+  // A chat can close before the enabled button's click is delivered.
+  chatId = 'original'; notifyChat()
+  const staleButton = generateButton()
+  chatId = null; staleButton.click(); await Bun.sleep(1)
+  expect(permissions).toHaveLength(0)
+  expect(requests.some((request) => request.type === 'qg_save' || request.type === 'qg_start')).toBe(false)
+  expect(generateButton().disabled).toBe(true)
+
+  // Closing a chat while permissions/settings are pending must not start a run.
+  chatId = 'original'; notifyChat(); generateButton().click(); await Bun.sleep(1)
+  expect(releaseSave).toBeDefined()
+  chatId = null; notifyChat(); releaseSave!(); await Bun.sleep(1)
+  expect(requests.some((request) => request.type === 'qg_start')).toBe(false)
+  expect(generateButton().disabled).toBe(true)
+
+  // Switching chats during startup must not silently change the destination.
+  chatId = 'original'; notifyChat(); generateButton().click(); await Bun.sleep(1)
+  chatId = 'another'; notifyChat(); releaseSave!(); await Bun.sleep(1)
+  expect(requests.some((request) => request.type === 'qg_start')).toBe(false)
+  expect(root.textContent).toContain('The active chat changed.')
+  expect(generateButton().disabled).toBe(false)
+
+  pauseSave = false; generateButton().click(); await Bun.sleep(1)
+  expect(requests.filter((request) => request.type === 'qg_start')).toHaveLength(1)
+  expect(requests.find((request) => request.type === 'qg_start').chatId).toBe('another')
+  expect(generateButton().disabled).toBe(true)
+  teardown(); teardown = undefined
+  expect(onChatState).toBeUndefined()
+  expect(events.size).toBe(0)
+})
+
 test.each([{ dropdown: true, initial: true, custom: true }, { dropdown: false, initial: true, custom: true }, { dropdown: false, initial: false, custom: true }, { dropdown: false, initial: true, custom: false }, { dropdown: false, initial: false, custom: false }])('workflow image controls follow mappings: %j', async ({ dropdown, initial, custom }) => {
   dom = new JSDOM('<div id="root"></div>', { url: 'http://localhost' })
   Object.assign(globalThis, { document: dom.window.document, HTMLElement: dom.window.HTMLElement, HTMLVideoElement: dom.window.HTMLVideoElement })

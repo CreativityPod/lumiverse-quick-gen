@@ -3,7 +3,7 @@ for (const entry of ['backend', 'frontend']) {
   const build = await Bun.build({
     entrypoints: [`${root}src/${entry}.ts`], outdir: `${root}dist`,
     naming: `${entry}.js`, target: 'browser', format: 'esm',
-    banner: '// QuickGen 0.1.5 — generated from src/.',
+    banner: '// QuickGen 0.1.6 — generated from src/.',
   })
   if (!build.success) throw new Error(build.logs.map(String).join('\n'))
 }

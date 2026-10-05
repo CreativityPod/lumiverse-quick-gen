@@ -166,11 +166,16 @@ export function setup(ctx: SpindleFrontendContext) {
   }
   async function generate() {
     if (!draft || !state) return
+    const chatId = ctx.getActiveChat().chatId
+    if (!chatId) { renderStatus(); return }
     starting = true; error = ''; renderStatus()
     try {
       if (draft.outputTarget && draft.outputTarget !== 'preview') await ensureChatPermission()
       await save()
-      const started = await request<Job>('qg_start', { selection: clone(draft), chatId: ctx.getActiveChat().chatId })
+      const activeChatId = ctx.getActiveChat().chatId
+      if (!activeChatId) return
+      if (activeChatId !== chatId) throw new Error('The active chat changed. Generate again in the chat you want to use.')
+      const started = await request<Job>('qg_start', { selection: clone(draft), chatId })
       // A progress update can arrive before the start response.
       if (state.job?.id !== started.id) state.job = started
     } finally { starting = false; renderStatus() }
@@ -195,11 +200,19 @@ export function setup(ctx: SpindleFrontendContext) {
     statusRoot.replaceChildren()
     const job = state?.job
     const busy = starting || job?.status === 'running' || job?.status === 'cancelling'
+    const chatId = ctx.getActiveChat().chatId
     tab.setBadge(busy ? '…' : null)
     const actions = el('div', '', 'qg-actions')
     const generateButton = button(`Generate ${draft?.kind ?? 'video'}`, generate, 'qg-primary')
-    generateButton.disabled = busy || inserting.size > 0 || !state?.supported || !state.catalog?.connections.length
+    generateButton.disabled = !chatId || busy || inserting.size > 0 || !state?.supported || !state.catalog?.connections.length
     actions.append(generateButton)
+    if (!chatId) {
+      const hint = el('small', 'Open a chat to generate.')
+      hint.id = 'qg-chat-required'
+      generateButton.setAttribute('aria-describedby', hint.id)
+      generateButton.title = hint.textContent!
+      actions.append(hint)
+    }
     if (busy && !starting) actions.append(button('Cancel', async () => { await request('qg_cancel') }, 'qg-danger'))
     statusRoot.append(actions)
     const text = error || job?.error || (job ? `${job.recipeName} · ${job.status === 'running' ? `Generating ${job.phase}` : job.status}` : 'Choose a workflow and Main Preset, then generate.')
@@ -296,12 +309,13 @@ export function setup(ctx: SpindleFrontendContext) {
     render()
   }
   const offChat = ctx.events.on('CHAT_SWITCHED', () => renderStatus())
+  const offChatState = ctx.state?.subscribe('chat.active', () => renderStatus())
   const offConnections = ctx.events.on('IMAGE_GEN_CONNECTION_CHANGED', () => { if (savedLabel) savedLabel.textContent = 'Connections changed · click Refresh' })
   render()
   void refresh().catch((reason) => { error = reason instanceof Error ? reason.message : String(reason); render() })
   return () => {
     disposed = true; clearTimeout(saveTimer)
     for (const callback of pending.values()) { clearTimeout(callback.timer); callback.reject(new Error('QuickGen panel closed.')) }
-    pending.clear(); offBackend(); offChat(); offConnections(); offAction(); action.destroy(); tab.destroy(); removeStyle()
+    pending.clear(); offBackend(); offChat(); offChatState?.(); offConnections(); offAction(); action.destroy(); tab.destroy(); removeStyle()
   }
 }
