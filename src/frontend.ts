@@ -170,7 +170,9 @@ export function setup(ctx: SpindleFrontendContext) {
     try {
       if (draft.outputTarget && draft.outputTarget !== 'preview') await ensureChatPermission()
       await save()
-      state.job = await request<Job>('qg_start', { selection: clone(draft), chatId: ctx.getActiveChat().chatId })
+      const started = await request<Job>('qg_start', { selection: clone(draft), chatId: ctx.getActiveChat().chatId })
+      // A progress update can arrive before the start response.
+      if (state.job?.id !== started.id) state.job = started
     } finally { starting = false; renderStatus() }
   }
   async function ensureChatPermission() {
@@ -246,9 +248,10 @@ export function setup(ctx: SpindleFrontendContext) {
         const warning = el('p', `Generated successfully, but could not post to chat: ${result.chatError}`)
         warning.setAttribute('role', 'alert'); caption.append(warning)
       }
-      const prompt = el('details'); prompt.append(el('summary', 'Resolved prompt'), el('p', result.prompt)); caption.append(prompt)
+      const prompt = el('details'); prompt.append(el('summary', 'Resolved prompt'), el('p', result.prompt))
+      if (!busy && result.prompt) caption.append(prompt)
       const unavailable = () => {
-        link.remove(); postingActions.remove(); destination.remove()
+        link.remove(); postingActions.remove(); destination.remove(); prompt.remove()
         return el('p', `${kind === 'image' ? 'Image' : 'Video'} unavailable.`, 'qg-media-unavailable')
       }
       if (!result.mediaUrl || unavailableMedia.has(result.mediaUrl)) {

@@ -327,7 +327,9 @@ function setup(ctx) {
       if (draft.outputTarget && draft.outputTarget !== "preview")
         await ensureChatPermission();
       await save();
-      state.job = await request("qg_start", { selection: clone(draft), chatId: ctx.getActiveChat().chatId });
+      const started = await request("qg_start", { selection: clone(draft), chatId: ctx.getActiveChat().chatId });
+      if (state.job?.id !== started.id)
+        state.job = started;
     } finally {
       starting = false;
       renderStatus();
@@ -432,11 +434,13 @@ function setup(ctx) {
       }
       const prompt = el("details");
       prompt.append(el("summary", "Resolved prompt"), el("p", result.prompt));
-      caption.append(prompt);
+      if (!busy && result.prompt)
+        caption.append(prompt);
       const unavailable = () => {
         link.remove();
         postingActions.remove();
         destination.remove();
+        prompt.remove();
         return el("p", `${kind === "image" ? "Image" : "Video"} unavailable.`, "qg-media-unavailable");
       };
       if (!result.mediaUrl || unavailableMedia.has(result.mediaUrl)) {

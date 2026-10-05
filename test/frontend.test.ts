@@ -84,6 +84,54 @@ test.each([{ dropdown: true, initial: true, custom: true }, { dropdown: false, i
   expect(root.querySelector('script')).toBeNull()
 })
 
+test.each(['image', 'video'] as const)('starting %s clears old prompts until the current result completes', async (kind) => {
+  dom = new JSDOM('<div id="root"></div>', { url: 'http://localhost' })
+  Object.assign(globalThis, { document: dom.window.document, HTMLElement: dom.window.HTMLElement, HTMLVideoElement: dom.window.HTMLVideoElement })
+  const root = document.getElementById('root')!
+  const settings: Settings = { kind, outputTarget: 'preview', step: emptyStep(kind) }
+  const old: Job = { id: 'old', chatId: 'chat', mode: kind, phase: kind, status: 'complete', recipeName: 'Comfy', startedAt: 1,
+    image: { imageId: 'image', mediaType: 'image', mimeType: 'image/png', mediaUrl: '/image', prompt: 'old image prompt' },
+    video: { imageId: 'video', mediaType: 'video', mimeType: 'video/mp4', mediaUrl: '/video', prompt: 'old video prompt' },
+  }
+  const running: Job = { id: 'new', chatId: 'chat', mode: kind, phase: kind, status: 'running', recipeName: 'Comfy', startedAt: 2, image: kind === 'video' ? old.image : undefined }
+  let onMessage: (message: unknown) => void = () => {}
+  let releaseSave: () => void = () => {}
+  const ctx = {
+    ui: { registerDrawerTab: () => ({ root, setBadge: () => {}, activate: () => {}, destroy: () => {} }), registerInputBarAction: () => ({ onClick: () => () => {}, destroy: () => {} }) },
+    dom: { addStyle: () => () => {} }, events: { on: () => () => {} },
+    getActiveChat: () => ({ chatId: 'chat', characterId: 'char' }),
+    onBackendMessage: (callback: typeof onMessage) => { onMessage = callback; return () => {} },
+    sendToBackend: (request: any) => {
+      if (request.type === 'qg_save') { releaseSave = () => onMessage({ requestId: request.requestId, ok: true, result: request.selection }); return }
+      queueMicrotask(() => {
+        if (request.type === 'qg_start') {
+          // The progress update can arrive before a stale start-response snapshot.
+          onMessage({ type: 'qg_job', job: { ...running, progress: { step: 1, totalSteps: 20 } } })
+          onMessage({ requestId: request.requestId, ok: true, result: running })
+        } else onMessage({ requestId: request.requestId, ok: true, result: { supported: true, settings, assets: [], job: old,
+          catalog: { activeId: null, activeConnectionId: null, presets: [], connections: [{ id: 'conn', name: 'Comfy', provider: 'comfyui', metadata: {} }] } } })
+      })
+    },
+  } as unknown as SpindleFrontendContext
+  teardown = setup(ctx); await Bun.sleep(1)
+  expect(root.textContent).toContain('old image prompt')
+  expect(root.textContent).toContain('old video prompt')
+  ;[...root.querySelectorAll('button')].find((button) => button.textContent === `Generate ${kind}`)!.click()
+  await Bun.sleep(1)
+  expect(root.textContent).not.toContain('old image prompt')
+  expect(root.textContent).not.toContain('old video prompt')
+  expect(root.querySelector('.qg-results details')).toBeNull()
+  releaseSave(); await Bun.sleep(1)
+  expect(root.querySelector('progress')?.value).toBe(1)
+  expect(root.querySelector('.qg-results details')).toBeNull()
+  expect(root.querySelector(kind === 'image' ? 'img' : 'video')).toBeNull()
+  onMessage({ type: 'qg_job', job: { ...running, progress: { step: 2, totalSteps: 20 } } })
+  expect(root.querySelector('.qg-results details')).toBeNull()
+  const result = { imageId: 'new-result', mediaType: kind, mimeType: `${kind}/${kind === 'image' ? 'png' : 'mp4'}`, mediaUrl: '/new-result', prompt: `latest ${kind} prompt` }
+  onMessage({ type: 'qg_job', job: { ...running, status: 'complete', [kind]: result } })
+  expect(root.querySelector(kind === 'image' ? 'img' : 'video')!.closest('figure')!.textContent).toContain(result.prompt)
+})
+
 test.each((['image', 'video'] as const).flatMap((kind) =>
   ([undefined, 'chat_attachment', 'attach_to_message'] as const).map((postedTarget) => ({ kind, postedTarget })),
 ))('unavailable results hide broken media and actions, preserving posting status: %j', async ({ kind, postedTarget }: { kind: MediaKind; postedTarget: Exclude<OutputTarget, 'preview'> | undefined }) => {
@@ -120,7 +168,8 @@ test.each((['image', 'video'] as const).flatMap((kind) =>
   expect(figure.querySelector(selector)).toBeNull()
   expect(figure.querySelector('.qg-media-unavailable')?.textContent).toBe(`${kind === 'image' ? 'Image' : 'Video'} unavailable.`)
   expect(figure.querySelectorAll('a, button')).toHaveLength(0)
-  expect(figure.textContent).toContain(result.prompt)
+  expect(figure.textContent).not.toContain(result.prompt)
+  expect(figure.querySelector('details')).toBeNull()
   expect(figure.querySelector('.qg-result-posted')?.textContent).toBe(postedTarget ? postedTarget === 'attach_to_message' ? 'Attached to message' : 'Inserted into chat' : undefined)
   expect(root.querySelector(otherSelector)).not.toBeNull()
   expect(root.querySelector(otherSelector)!.closest('figure')!.querySelector('a')).not.toBeNull()
@@ -128,6 +177,7 @@ test.each((['image', 'video'] as const).flatMap((kind) =>
   // Progress/status updates must not bring back a preview that already failed.
   onMessage({ type: 'qg_job', job })
   expect(root.querySelector(selector)).toBeNull()
+  expect(root.querySelector('.qg-media-unavailable')!.closest('figure')!.querySelector('details')).toBeNull()
   expect(root.querySelector(otherSelector)).not.toBeNull()
 
   // Explicit refresh retries a transient load failure.
