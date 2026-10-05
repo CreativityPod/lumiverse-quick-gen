@@ -14,6 +14,7 @@ export const styles = `
 .qg progress {width:100%; height:6px; accent-color:var(--lumiverse-primary,#a78bfa); margin-top:8px} .qg-results {display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; margin-top:14px}
 .qg-results figure {margin:0; overflow:hidden; border:1px solid var(--qg-border); border-radius:10px} .qg-results img,.qg-results video {width:100%; max-height:360px; object-fit:contain; display:block; background:rgba(0,0,0,.2)} .qg-results figcaption {padding:10px; font-size:12px}
 .qg-result-actions {display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px; margin-bottom:6px} .qg label>small {display:block; margin-top:5px; line-height:1.5}
+.qg-post-actions {display:flex; flex-wrap:wrap; gap:8px} .qg-result-posted {color:var(--qg-muted)} .qg p.qg-media-unavailable {padding:16px; margin:0; text-align:center}
 .qg a {color:var(--lumiverse-primary,#a78bfa)} .qg footer {margin-top:16px; color:var(--qg-muted); font-size:11px} .qg .qg-saved {color:var(--qg-muted); font-size:11px}
 /* Match ImgGen's FormComponents fields using the shared live theme tokens. */
 .qg input,.qg textarea {transition:border-color var(--lumiverse-transition-fast,.15s),box-shadow var(--lumiverse-transition-fast,.15s)}

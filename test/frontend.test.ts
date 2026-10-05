@@ -2,7 +2,7 @@ import { afterEach, expect, test } from 'bun:test'
 import { JSDOM } from 'jsdom'
 import type { SpindleFrontendContext } from 'lumiverse-spindle-types'
 import { setup } from '../src/frontend'
-import { emptyStep, type Catalog, type Job, type Settings } from '../src/model'
+import { emptyStep, type Catalog, type Job, type MediaKind, type OutputTarget, type Settings } from '../src/model'
 
 let teardown: (() => void) | undefined
 let dom: JSDOM | undefined
@@ -84,6 +84,66 @@ test.each([{ dropdown: true, initial: true, custom: true }, { dropdown: false, i
   expect(root.querySelector('script')).toBeNull()
 })
 
+test.each((['image', 'video'] as const).flatMap((kind) =>
+  ([undefined, 'chat_attachment', 'attach_to_message'] as const).map((postedTarget) => ({ kind, postedTarget })),
+))('unavailable results hide broken media and actions, preserving posting status: %j', async ({ kind, postedTarget }: { kind: MediaKind; postedTarget: Exclude<OutputTarget, 'preview'> | undefined }) => {
+  dom = new JSDOM('<div id="root"></div>', { url: 'http://localhost' })
+  Object.assign(globalThis, { document: dom.window.document, HTMLElement: dom.window.HTMLElement, HTMLVideoElement: dom.window.HTMLVideoElement })
+  const root = document.getElementById('root')!
+  const settings: Settings = { kind, outputTarget: 'preview', step: emptyStep(kind) }
+  const job: Job = { id: 'job', chatId: 'chat', mode: kind, phase: kind, status: 'complete', recipeName: 'Comfy', startedAt: 1,
+    image: { imageId: 'image', mediaType: 'image', mimeType: 'image/png', mediaUrl: '/api/v1/images/image', prompt: 'image prompt' },
+    video: { imageId: 'video', mediaType: 'video', mimeType: 'video/mp4', mediaUrl: '/api/v1/images/video', prompt: 'video prompt' },
+  }
+  const result = job[kind]!
+  if (postedTarget) { result.chatMessageId = 'posted'; result.chatOutputTarget = postedTarget }
+  let onMessage: (message: unknown) => void = () => {}
+  const ctx = {
+    ui: { registerDrawerTab: () => ({ root, setBadge: () => {}, activate: () => {}, destroy: () => {} }), registerInputBarAction: () => ({ onClick: () => () => {}, destroy: () => {} }) },
+    dom: { addStyle: () => () => {} }, events: { on: () => () => {} },
+    getActiveChat: () => ({ chatId: 'chat', characterId: 'char' }),
+    onBackendMessage: (callback: typeof onMessage) => { onMessage = callback; return () => {} },
+    sendToBackend: (request: any) => {
+      const result = request.type === 'qg_save' ? request.selection : { supported: true, settings, assets: [], job, catalog: { activeId: null, activeConnectionId: null, presets: [], connections: [] } }
+      queueMicrotask(() => onMessage({ requestId: request.requestId, ok: true, result }))
+    },
+  } as unknown as SpindleFrontendContext
+  teardown = setup(ctx); await Bun.sleep(1)
+  const selector = kind === 'image' ? 'img' : 'video'
+  const otherSelector = kind === 'image' ? 'video' : 'img'
+  const media = root.querySelector(selector)!
+  const figure = media.closest('figure')!
+  expect(figure.querySelector('a')?.textContent).toBe(`Open ${kind}`)
+  expect(figure.querySelectorAll('button')).toHaveLength(postedTarget ? 0 : 2)
+
+  media.dispatchEvent(new dom.window.Event('error'))
+  expect(figure.querySelector(selector)).toBeNull()
+  expect(figure.querySelector('.qg-media-unavailable')?.textContent).toBe(`${kind === 'image' ? 'Image' : 'Video'} unavailable.`)
+  expect(figure.querySelectorAll('a, button')).toHaveLength(0)
+  expect(figure.textContent).toContain(result.prompt)
+  expect(figure.querySelector('.qg-result-posted')?.textContent).toBe(postedTarget ? postedTarget === 'attach_to_message' ? 'Attached to message' : 'Inserted into chat' : undefined)
+  expect(root.querySelector(otherSelector)).not.toBeNull()
+  expect(root.querySelector(otherSelector)!.closest('figure')!.querySelector('a')).not.toBeNull()
+
+  // Progress/status updates must not bring back a preview that already failed.
+  onMessage({ type: 'qg_job', job })
+  expect(root.querySelector(selector)).toBeNull()
+  expect(root.querySelector(otherSelector)).not.toBeNull()
+
+  // Explicit refresh retries a transient load failure.
+  ;[...root.querySelectorAll('button')].find((button) => button.textContent === 'Refresh')!.click()
+  await Bun.sleep(5)
+  expect(root.querySelector(selector)?.getAttribute('src')).toBe(result.mediaUrl)
+  expect(root.querySelector(selector)!.closest('figure')!.querySelector('a')).not.toBeNull()
+  expect(root.querySelector(selector)!.closest('figure')!.querySelectorAll('button')).toHaveLength(postedTarget ? 0 : 2)
+
+  // An empty URL must not render a broken player or link to the current page.
+  result.mediaUrl = ''
+  onMessage({ type: 'qg_job', job })
+  expect(root.querySelector(selector)).toBeNull()
+  expect(root.querySelector('.qg-media-unavailable')!.closest('figure')!.querySelectorAll('a, button')).toHaveLength(0)
+})
+
 test.each([{ granted: true, target: 'chat_attachment' }, { granted: false, target: 'chat_attachment' }, { granted: true, target: 'attach_to_message' }, { granted: false, target: 'attach_to_message' }])('output selection and result actions respect permission: %j', async ({ granted, target }) => {
   dom = new JSDOM('<div id="root"></div>', { url: 'http://localhost' })
   Object.assign(globalThis, { document: dom.window.document, HTMLElement: dom.window.HTMLElement, HTMLVideoElement: dom.window.HTMLVideoElement })
@@ -134,6 +194,8 @@ test.each([{ granted: true, target: 'chat_attachment' }, { granted: false, targe
   if (granted) {
     expect(inserts[0]).toMatchObject({ jobId: 'finished', kind: 'image', outputTarget: target })
     expect(inserts[0].chatId).toBeUndefined()
-    expect([...root.querySelectorAll('button')].find((button) => button.textContent === (target === 'attach_to_message' ? 'Attached to message' : 'Inserted into chat'))?.disabled).toBe(true)
+    expect(root.querySelector('.qg-result-posted')?.textContent).toBe(target === 'attach_to_message' ? 'Attached to message' : 'Inserted into chat')
+    expect(root.querySelector('.qg-post-actions')).toBeNull()
+    expect(root.textContent).not.toContain('Inserts into the original chat.')
   } else expect(root.textContent).toContain('Chat Mutation')
 })

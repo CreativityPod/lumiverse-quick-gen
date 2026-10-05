@@ -54,6 +54,7 @@ var styles = `
 .qg progress {width:100%; height:6px; accent-color:var(--lumiverse-primary,#a78bfa); margin-top:8px} .qg-results {display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; margin-top:14px}
 .qg-results figure {margin:0; overflow:hidden; border:1px solid var(--qg-border); border-radius:10px} .qg-results img,.qg-results video {width:100%; max-height:360px; object-fit:contain; display:block; background:rgba(0,0,0,.2)} .qg-results figcaption {padding:10px; font-size:12px}
 .qg-result-actions {display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px; margin-bottom:6px} .qg label>small {display:block; margin-top:5px; line-height:1.5}
+.qg-post-actions {display:flex; flex-wrap:wrap; gap:8px} .qg-result-posted {color:var(--qg-muted)} .qg p.qg-media-unavailable {padding:16px; margin:0; text-align:center}
 .qg a {color:var(--lumiverse-primary,#a78bfa)} .qg footer {margin-top:16px; color:var(--qg-muted); font-size:11px} .qg .qg-saved {color:var(--qg-muted); font-size:11px}
 /* Match ImgGen's FormComponents fields using the shared live theme tokens. */
 .qg input,.qg textarea {transition:border-color var(--lumiverse-transition-fast,.15s),box-shadow var(--lumiverse-transition-fast,.15s)}
@@ -85,6 +86,7 @@ function setup(ctx) {
   let disposed = false;
   let starting = false;
   const inserting = new Set;
+  const unavailableMedia = new Set;
   let saveTimer;
   const pending = new Map;
   function request(type, payload = {}) {
@@ -395,32 +397,29 @@ function setup(ctx) {
       if (!result)
         continue;
       const figure = el("figure");
-      const media = result.mediaType === "video" ? el("video") : el("img");
-      media.src = result.mediaUrl;
-      if (media instanceof HTMLVideoElement) {
-        media.controls = true;
-        media.preload = "metadata";
-        media.playsInline = true;
-      } else
-        media.alt = `QuickGen ${kind} result`;
       const caption = el("figcaption");
       const link = el("a", `Open ${kind}`);
       link.href = result.mediaUrl;
       link.target = "_blank";
       link.rel = "noopener";
       const resultActions = el("div", "", "qg-result-actions");
-      const isInserting = inserting.has(`${job.id}:${kind}`);
-      const insert = button(result.chatMessageId ? result.chatOutputTarget === "attach_to_message" ? "Attached to message" : "Inserted into chat" : isInserting ? "Inserting…" : "Insert into chat", () => insertIntoChat(job, kind));
-      insert.disabled = !!result.chatMessageId || inserting.size > 0 || busy;
-      resultActions.append(link, insert);
-      if (!result.chatMessageId) {
+      const postingActions = el("div", "", "qg-post-actions");
+      resultActions.append(link);
+      if (result.chatMessageId) {
+        resultActions.append(el("span", result.chatOutputTarget === "attach_to_message" ? "Attached to message" : "Inserted into chat", "qg-result-posted"));
+      } else {
+        const isInserting = inserting.has(`${job.id}:${kind}`);
+        const insert = button(isInserting ? "Inserting…" : "Insert into chat", () => insertIntoChat(job, kind));
+        insert.disabled = inserting.size > 0 || busy;
         const attach = button(isInserting ? "Posting…" : "Attach to last message", () => insertIntoChat(job, kind, "attach_to_message"));
         attach.disabled = inserting.size > 0 || busy;
-        resultActions.append(attach);
+        postingActions.append(insert, attach);
+        resultActions.append(postingActions);
       }
       caption.append(resultActions);
-      if ((result.chatId ?? job.chatId) !== ctx.getActiveChat().chatId)
-        caption.append(el("small", "Inserts into the original chat."));
+      const destination = el("small", "Inserts into the original chat.");
+      if (!result.chatMessageId && (result.chatId ?? job.chatId) !== ctx.getActiveChat().chatId)
+        caption.append(destination);
       if (result.chatError) {
         const warning = el("p", `Generated successfully, but could not post to chat: ${result.chatError}`);
         warning.setAttribute("role", "alert");
@@ -429,7 +428,32 @@ function setup(ctx) {
       const prompt = el("details");
       prompt.append(el("summary", "Resolved prompt"), el("p", result.prompt));
       caption.append(prompt);
-      figure.append(media, caption);
+      const unavailable = () => {
+        link.remove();
+        postingActions.remove();
+        destination.remove();
+        return el("p", `${kind === "image" ? "Image" : "Video"} unavailable.`, "qg-media-unavailable");
+      };
+      if (!result.mediaUrl || unavailableMedia.has(result.mediaUrl)) {
+        figure.append(unavailable());
+      } else {
+        const media = result.mediaType === "video" ? el("video") : el("img");
+        media.onerror = () => {
+          if (disposed || !figure.isConnected)
+            return;
+          unavailableMedia.add(result.mediaUrl);
+          media.replaceWith(unavailable());
+        };
+        if (media instanceof HTMLVideoElement) {
+          media.controls = true;
+          media.preload = "metadata";
+          media.playsInline = true;
+        } else
+          media.alt = `QuickGen ${kind} result`;
+        media.src = result.mediaUrl;
+        figure.append(media);
+      }
+      figure.append(caption);
       results.append(figure);
     }
     statusRoot.append(results);
@@ -469,6 +493,7 @@ function setup(ctx) {
     if (disposed)
       return;
     state = next;
+    unavailableMedia.clear();
     draft = clone(state.settings);
     render();
   }

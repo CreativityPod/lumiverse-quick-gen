@@ -21,6 +21,7 @@ export function setup(ctx: SpindleFrontendContext) {
   let disposed = false
   let starting = false
   const inserting = new Set<string>()
+  const unavailableMedia = new Set<string>()
   let saveTimer: ReturnType<typeof setTimeout> | undefined
   const pending = new Map<string, { resolve: (value: unknown) => void; reject: (reason: Error) => void; timer: ReturnType<typeof setTimeout> }>()
   function request<T>(type: string, payload: Record<string, unknown> = {}): Promise<T> {
@@ -217,30 +218,49 @@ export function setup(ctx: SpindleFrontendContext) {
       const result = job?.[kind]
       if (!result) continue
       const figure = el('figure')
-      const media = result.mediaType === 'video' ? el('video') : el('img')
-      media.src = result.mediaUrl
-      if (media instanceof HTMLVideoElement) { media.controls = true; media.preload = 'metadata'; media.playsInline = true }
-      else media.alt = `QuickGen ${kind} result`
       const caption = el('figcaption')
       const link = el('a', `Open ${kind}`); link.href = result.mediaUrl; link.target = '_blank'; link.rel = 'noopener'
       const resultActions = el('div', '', 'qg-result-actions')
-      const isInserting = inserting.has(`${job!.id}:${kind}`)
-      const insert = button(result.chatMessageId ? result.chatOutputTarget === 'attach_to_message' ? 'Attached to message' : 'Inserted into chat' : isInserting ? 'Inserting…' : 'Insert into chat', () => insertIntoChat(job!, kind))
-      insert.disabled = !!result.chatMessageId || inserting.size > 0 || busy
-      resultActions.append(link, insert)
-      if (!result.chatMessageId) {
+      const postingActions = el('div', '', 'qg-post-actions')
+      resultActions.append(link)
+      if (result.chatMessageId) {
+        resultActions.append(el('span', result.chatOutputTarget === 'attach_to_message' ? 'Attached to message' : 'Inserted into chat', 'qg-result-posted'))
+      } else {
+        const isInserting = inserting.has(`${job!.id}:${kind}`)
+        const insert = button(isInserting ? 'Inserting…' : 'Insert into chat', () => insertIntoChat(job!, kind))
+        insert.disabled = inserting.size > 0 || busy
         const attach = button(isInserting ? 'Posting…' : 'Attach to last message', () => insertIntoChat(job!, kind, 'attach_to_message'))
         attach.disabled = inserting.size > 0 || busy
-        resultActions.append(attach)
+        postingActions.append(insert, attach)
+        resultActions.append(postingActions)
       }
       caption.append(resultActions)
-      if ((result.chatId ?? job!.chatId) !== ctx.getActiveChat().chatId) caption.append(el('small', 'Inserts into the original chat.'))
+      const destination = el('small', 'Inserts into the original chat.')
+      if (!result.chatMessageId && (result.chatId ?? job!.chatId) !== ctx.getActiveChat().chatId) caption.append(destination)
       if (result.chatError) {
         const warning = el('p', `Generated successfully, but could not post to chat: ${result.chatError}`)
         warning.setAttribute('role', 'alert'); caption.append(warning)
       }
       const prompt = el('details'); prompt.append(el('summary', 'Resolved prompt'), el('p', result.prompt)); caption.append(prompt)
-      figure.append(media, caption); results.append(figure)
+      const unavailable = () => {
+        link.remove(); postingActions.remove(); destination.remove()
+        return el('p', `${kind === 'image' ? 'Image' : 'Video'} unavailable.`, 'qg-media-unavailable')
+      }
+      if (!result.mediaUrl || unavailableMedia.has(result.mediaUrl)) {
+        figure.append(unavailable())
+      } else {
+        const media = result.mediaType === 'video' ? el('video') : el('img')
+        media.onerror = () => {
+          if (disposed || !figure.isConnected) return
+          unavailableMedia.add(result.mediaUrl)
+          media.replaceWith(unavailable())
+        }
+        if (media instanceof HTMLVideoElement) { media.controls = true; media.preload = 'metadata'; media.playsInline = true }
+        else media.alt = `QuickGen ${kind} result`
+        media.src = result.mediaUrl
+        figure.append(media)
+      }
+      figure.append(caption); results.append(figure)
     }
     statusRoot.append(results)
   }
@@ -263,6 +283,7 @@ export function setup(ctx: SpindleFrontendContext) {
     const next = await request<Bootstrap>('qg_bootstrap')
     if (disposed) return
     state = next
+    unavailableMedia.clear()
     draft = clone(state.settings)
     render()
   }
