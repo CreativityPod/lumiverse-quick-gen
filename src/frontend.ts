@@ -121,7 +121,7 @@ export function setup(ctx: SpindleFrontendContext) {
       ? 'Insert the generated image or video into the chat where this run starts.'
       : draft!.outputTarget === 'attach_to_message'
         ? 'Attach to the last message in this chat when generation starts.'
-        : 'Preview the result here. You can insert or attach it afterward.'))
+        : kind === 'image' ? 'Preview the image here. You can insert or attach it afterward.' : 'Preview the video here.'))
     panel.append(output)
     if (acceptsSource) {
       const sourceItems = [{ value: 'none', label: 'Use workflow image fields / no override' }, { value: 'last', label: 'Previous QuickGen image' }, ...state!.assets.map((asset) => ({ value: asset.id, label: asset.original_filename || asset.id }))]
@@ -225,18 +225,23 @@ export function setup(ctx: SpindleFrontendContext) {
       resultActions.append(link)
       if (result.chatMessageId) {
         resultActions.append(el('span', result.chatOutputTarget === 'attach_to_message' ? 'Attached to message' : 'Inserted into chat', 'qg-result-posted'))
-      } else {
-        const isInserting = inserting.has(`${job!.id}:${kind}`)
-        const insert = button(isInserting ? 'Inserting…' : 'Insert into chat', () => insertIntoChat(job!, kind))
-        insert.disabled = inserting.size > 0 || busy
-        const attach = button(isInserting ? 'Posting…' : 'Attach to last message', () => insertIntoChat(job!, kind, 'attach_to_message'))
-        attach.disabled = inserting.size > 0 || busy
-        postingActions.append(insert, attach)
+      } else if (kind === 'image' && result.mediaType === 'image') {
+        if (inserting.has(`${job!.id}:${kind}`)) {
+          const posting = el('span', 'Posting…', 'qg-result-posting')
+          posting.setAttribute('role', 'status')
+          postingActions.append(posting)
+        } else {
+          const insert = button('Insert into chat', () => insertIntoChat(job!, kind))
+          insert.disabled = inserting.size > 0 || busy
+          const attach = button('Attach to last message', () => insertIntoChat(job!, kind, 'attach_to_message'))
+          attach.disabled = inserting.size > 0 || busy
+          postingActions.append(insert, attach)
+        }
         resultActions.append(postingActions)
       }
       caption.append(resultActions)
       const destination = el('small', 'Inserts into the original chat.')
-      if (!result.chatMessageId && (result.chatId ?? job!.chatId) !== ctx.getActiveChat().chatId) caption.append(destination)
+      if (!result.chatMessageId && kind === 'image' && result.mediaType === 'image' && (result.chatId ?? job!.chatId) !== ctx.getActiveChat().chatId) caption.append(destination)
       if (result.chatError) {
         const warning = el('p', `Generated successfully, but could not post to chat: ${result.chatError}`)
         warning.setAttribute('role', 'alert'); caption.append(warning)

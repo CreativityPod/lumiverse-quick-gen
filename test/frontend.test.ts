@@ -114,7 +114,7 @@ test.each((['image', 'video'] as const).flatMap((kind) =>
   const media = root.querySelector(selector)!
   const figure = media.closest('figure')!
   expect(figure.querySelector('a')?.textContent).toBe(`Open ${kind}`)
-  expect(figure.querySelectorAll('button')).toHaveLength(postedTarget ? 0 : 2)
+  expect(figure.querySelectorAll('button')).toHaveLength(!postedTarget && kind === 'image' ? 2 : 0)
 
   media.dispatchEvent(new dom.window.Event('error'))
   expect(figure.querySelector(selector)).toBeNull()
@@ -135,7 +135,7 @@ test.each((['image', 'video'] as const).flatMap((kind) =>
   await Bun.sleep(5)
   expect(root.querySelector(selector)?.getAttribute('src')).toBe(result.mediaUrl)
   expect(root.querySelector(selector)!.closest('figure')!.querySelector('a')).not.toBeNull()
-  expect(root.querySelector(selector)!.closest('figure')!.querySelectorAll('button')).toHaveLength(postedTarget ? 0 : 2)
+  expect(root.querySelector(selector)!.closest('figure')!.querySelectorAll('button')).toHaveLength(!postedTarget && kind === 'image' ? 2 : 0)
 
   // An empty URL must not render a broken player or link to the current page.
   result.mediaUrl = ''
@@ -150,6 +150,7 @@ test.each([{ granted: true, target: 'chat_attachment' }, { granted: false, targe
   const root = document.getElementById('root')!
   const requests: any[] = []
   const permissions: string[][] = []
+  const postingSnapshots: Array<{ status: string | null; buttons: number }> = []
   let activeChat = 'original'
   let onMessage: (message: unknown) => void = () => {}
   let saved: Settings = { kind: 'image', outputTarget: 'preview', step: { ...emptyStep('image'), connectionId: 'conn', workflowId: 'wf' } }
@@ -164,6 +165,7 @@ test.each([{ granted: true, target: 'chat_attachment' }, { granted: false, targe
     onBackendMessage: (callback: typeof onMessage) => { onMessage = callback; return () => {} },
     sendToBackend: (request: any) => {
       requests.push(request)
+      if (request.type === 'qg_insert') postingSnapshots.push({ status: root.querySelector('.qg-result-posting')?.textContent ?? null, buttons: root.querySelectorAll('.qg-post-actions button').length })
       if (request.type === 'qg_save') saved = request.selection
       const result = request.type === 'qg_bootstrap' ? { supported: true, settings: saved, assets: [], job: null,
         catalog: { activeId: null, presets: [], connections: [{ id: 'conn', name: 'Comfy', provider: 'comfyui', metadata: {} }] } }
@@ -194,6 +196,7 @@ test.each([{ granted: true, target: 'chat_attachment' }, { granted: false, targe
   if (granted) {
     expect(inserts[0]).toMatchObject({ jobId: 'finished', kind: 'image', outputTarget: target })
     expect(inserts[0].chatId).toBeUndefined()
+    expect(postingSnapshots).toEqual([{ status: 'Posting…', buttons: 0 }])
     expect(root.querySelector('.qg-result-posted')?.textContent).toBe(target === 'attach_to_message' ? 'Attached to message' : 'Inserted into chat')
     expect(root.querySelector('.qg-post-actions')).toBeNull()
     expect(root.textContent).not.toContain('Inserts into the original chat.')
