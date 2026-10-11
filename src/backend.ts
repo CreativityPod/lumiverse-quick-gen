@@ -30,8 +30,25 @@ async function catalog(userId: string): Promise<Catalog> {
 }
 async function assets(userId: string): Promise<Asset[]> {
   if (!spindle.permissions.has('images')) return []
-  const list = await spindle.images.list({ limit: 100, userId })
-  return list.data.filter((asset) => asset.mime_type.startsWith('image/'))
+  const generated: Asset[] = []
+  let offset = 0
+  do {
+    const list = await spindle.images.list({ limit: 200, offset, userId })
+    for (const asset of list.data) {
+      if (asset.mime_type.startsWith('image/') && asset.original_filename?.toLowerCase().startsWith('image-gen-')) generated.push(asset)
+      if (generated.length === 100) return generated
+    }
+    offset += list.data.length
+    if (!list.data.length || offset >= (list.total ?? offset)) break
+  } while (true)
+  return generated
+}
+async function sourceImage(imageId: unknown, userId: string): Promise<Asset> {
+  if (!spindle.permissions.has('images')) throw new Error('Grant QuickGen the Images permission to choose a source image.')
+  if (typeof imageId !== 'string' || !imageId || imageId.length > 256) throw new Error('Choose a valid source image.')
+  const image = await spindle.images.get(imageId, { specificity: 'sm', userId })
+  if (!image || !image.mime_type.startsWith('image/')) throw new Error('This source image is unavailable. Choose another image.')
+  return image
 }
 async function lastJob(userId: string): Promise<Job | null> {
   if (jobs.has(userId)) return jobs.get(userId)!
@@ -151,14 +168,18 @@ async function start(userId: string, raw: unknown, chatId: unknown): Promise<Job
 }
 
 spindle.onFrontendMessage(async (payload, userId) => {
-  const message = payload as { type?: string; requestId?: string; selection?: unknown; chatId?: string; jobId?: string; kind?: MediaKind; outputTarget?: unknown } | null
+  const message = payload as { type?: string; requestId?: string; selection?: unknown; chatId?: string; jobId?: string; kind?: MediaKind; outputTarget?: unknown; imageId?: unknown } | null
   if (!userId || !message?.type?.startsWith('qg_') || !message.requestId) return
   try {
     let result: unknown
     switch (message.type) {
-      case 'qg_bootstrap':
-        result = { supported: supported(), settings: await settings(userId), catalog: spindle.permissions.has('image_gen') && supported() ? await catalog(userId) : null, assets: await assets(userId), job: await lastJob(userId) }
+      case 'qg_bootstrap': {
+        const selection = await settings(userId)
+        const selectedSource = ['none', 'last'].includes(selection.step.source) ? null : await sourceImage(selection.step.source, userId).catch(() => null)
+        result = { supported: supported(), settings: selection, catalog: spindle.permissions.has('image_gen') && supported() ? await catalog(userId) : null, assets: await assets(userId), selectedSource, job: await lastJob(userId) }
         break
+      }
+      case 'qg_source_image': result = await sourceImage(message.imageId, userId); break
       case 'qg_save':
         result = await withSettings(userId, async () => {
           const state = normalizeSettings(message.selection)

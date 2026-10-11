@@ -1,6 +1,6 @@
 # Lumiverse QuickGen
 
-**Current version:** 0.1.6
+**Current version:** 0.1.7
 
 QuickGen is a Lumiverse extension for generating images and videos from saved ComfyUI workflows. Choose an ImgGen Main Preset, adjust the workflow settings, and preview the result or add it to a chat.
 
@@ -18,7 +18,8 @@ To update QuickGen, replace the installed extension files with the latest versio
 
 - **Image and video generation:** Run one saved ComfyUI workflow at a time with your chosen Main Preset.
 - **Workflow controls:** Adjust field values and optionally override the prompt. QuickGen remembers your last selections.
-- **Source images:** Use a saved Lumiverse image or select **Previous QuickGen image** when the workflow supports an image source. To select an ImgGen result, click **Refresh** to update the image list.
+- **Source images:** Choose from up to 100 recent generated images from ImgGen and QuickGen, or select **Previous QuickGen image**, when the workflow supports an image source. Click **Refresh** to update the list.
+- **Image Browser integration:** Select **Image Browser** to browse generated images and uploads, search the full library, and choose one source image. Select **Use image** to confirm or **Cancel** to keep the current source. Image Browser v0.1.9 or later must be enabled with its **Images** permission; otherwise, the button is disabled.
 - **Chat output:** Preview a result, insert it as a new chat message, or attach it to the last message. Unposted image previews can also be added to chat afterward. For videos, select the chat output before generating.
 - **Progress and cancellation:** Follow generation progress, cancel an active run, and open completed images or videos.
 - **Result status:** See whether a result has been inserted or attached. Unavailable media displays an explanatory message. Prompt details are hidden during generation and when the corresponding result is unavailable.
@@ -34,6 +35,7 @@ Generation is available only while a chat is open. If no chat is active, the Gen
 
 ## Version history
 
+- **0.1.7** — Limited the source dropdown to 100 recent generated images. Added an optional Image Browser picker with full-library search, single-image selection, and cancellation.
 - **0.1.6** — Disabled generation without an active chat and added an explanation that updates as chats open or close. Hid previous prompts during generation and prompts for unavailable results. Simplified the README.
 - **0.1.5** — Replaced broken previews with messages for unavailable media. Limited posting actions to unposted image previews and replaced selected actions with posting and completion statuses.
 - **0.1.4** — Added **Preview only**, **Insert into chat**, and **Attach to last message** output options for images and videos.

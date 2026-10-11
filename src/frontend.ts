@@ -1,7 +1,8 @@
 import type { SpindleFrontendContext } from 'lumiverse-spindle-types'
 import { fieldControls, supportsSourceImage, workflows, type Asset, type Catalog, type Job, type MediaKind, type OutputTarget, type Scalar, type Settings, type Step } from './model'
 import { styles } from './styles'
-interface Bootstrap { supported: boolean; settings: Settings; catalog: Catalog | null; assets: Asset[]; job: Job | null }
+interface Bootstrap { supported: boolean; settings: Settings; catalog: Catalog | null; assets: Asset[]; selectedSource?: Asset | null; job: Job | null }
+const pickerEvents = { probe: 'image_browser:picker:probe', availability: 'image_browser:picker:availability', request: 'image_browser:picker:request', result: 'image_browser:picker:result', cancel: 'image_browser:picker:cancel' }
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
 const uid = () => `qg-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
 
@@ -20,6 +21,11 @@ export function setup(ctx: SpindleFrontendContext) {
   let error = ''
   let disposed = false
   let starting = false
+  let browserAvailable = false
+  let validatingSource = false
+  let browserButton: HTMLButtonElement | undefined
+  let browserHint: HTMLElement | undefined
+  let picker: { requestId: string; step: Step; kind: MediaKind; connectionId: string; workflowId: string; source: string; chatId: string | null; timer?: ReturnType<typeof setTimeout> } | undefined
   const inserting = new Set<string>()
   const unavailableMedia = new Set<string>()
   let saveTimer: ReturnType<typeof setTimeout> | undefined
@@ -94,6 +100,59 @@ export function setup(ctx: SpindleFrontendContext) {
     clearTimeout(saveTimer)
     saveTimer = setTimeout(() => { void save().catch(showError) }, 600)
   }
+  function updateBrowserControl() {
+    if (browserButton) {
+      browserButton.disabled = !browserAvailable || !!picker || validatingSource
+      browserButton.title = browserAvailable ? 'Choose one source image' : 'Image Browser extension required'
+    }
+    if (browserHint) browserHint.textContent = !browserAvailable
+      ? 'Image Browser extension v0.1.9 or later must be enabled with Images permission.'
+      : picker ? 'Choose one image in Image Browser.' : validatingSource ? 'Loading selected image…' : 'Browse all stored images, including uploads.'
+  }
+  function cancelPicker() {
+    if (!picker) return
+    const requestId = picker.requestId
+    clearTimeout(picker.timer); picker = undefined
+    try { ctx.events.emit?.(pickerEvents.cancel, { version: 1, requester: 'quick_gen', requestId }) }
+    catch (reason) { if (!disposed) throw reason } // The host can invalidate the frontend before teardown.
+    updateBrowserControl()
+  }
+  function openImageBrowser() {
+    if (!browserAvailable || picker || validatingSource || !draft) return
+    picker = { requestId: uid(), step: draft.step, kind: draft.kind, connectionId: draft.step.connectionId, workflowId: draft.step.workflowId, source: draft.step.source, chatId: ctx.getActiveChat().chatId }
+    picker.timer = setTimeout(() => {
+      cancelPicker(); browserAvailable = false; updateBrowserControl()
+      showError(new Error('Image Browser did not open. Enable Image Browser v0.1.9 or later, then refresh QuickGen.'))
+    }, 3000)
+    updateBrowserControl()
+    ctx.events.emit(pickerEvents.request, { version: 1, requester: 'quick_gen', requestId: picker.requestId })
+  }
+  const offBrowserAvailability = ctx.events.on(pickerEvents.availability, (payload) => {
+    const message = payload as { version?: number; provider?: string; available?: boolean } | null
+    if (disposed || message?.provider !== 'image_browser' || message.version !== 1) return
+    browserAvailable = message.available === true
+    if (!browserAvailable) cancelPicker()
+    updateBrowserControl()
+  })
+  const offBrowserUnload = ctx.events.on('SPINDLE_EXTENSION_UNLOADED', (payload) => {
+    if ((payload as { identifier?: string } | null)?.identifier !== 'image_browser') return
+    browserAvailable = false; cancelPicker(); updateBrowserControl()
+  })
+  const offPickerResult = ctx.events.on(pickerEvents.result, (payload) => {
+    const message = payload as { version?: number; provider?: string; requester?: string; requestId?: string; status?: string; imageId?: unknown; error?: string } | null
+    if (disposed || !picker || message?.provider !== 'image_browser' || message.version !== 1 || message.requester !== 'quick_gen' || message.requestId !== picker.requestId) return
+    clearTimeout(picker.timer)
+    if (message.status === 'opened') return
+    const selected = picker
+    picker = undefined; updateBrowserControl()
+    if (message.status === 'error') { showError(new Error(message.error || 'Image Browser could not open.')); return }
+    if (message.status !== 'selected') return
+    validatingSource = true; updateBrowserControl(); renderStatus()
+    void request<Asset>('qg_source_image', { imageId: message.imageId }).then((asset) => {
+      if (disposed || !draft || !state || draft.step !== selected.step || draft.kind !== selected.kind || draft.step.connectionId !== selected.connectionId || draft.step.workflowId !== selected.workflowId || draft.step.source !== selected.source || ctx.getActiveChat().chatId !== selected.chatId) return
+      state.selectedSource = asset; draft.step.source = asset.id; changed(); render()
+    }).catch(showError).finally(() => { validatingSource = false; if (!disposed) { updateBrowserControl(); renderStatus() } })
+  })
   function renderStep() {
     const { kind, step } = draft!
     defaultSelection(step)
@@ -125,7 +184,14 @@ export function setup(ctx: SpindleFrontendContext) {
     panel.append(output)
     if (acceptsSource) {
       const sourceItems = [{ value: 'none', label: 'Use workflow image fields / no override' }, { value: 'last', label: 'Previous QuickGen image' }, ...state!.assets.map((asset) => ({ value: asset.id, label: asset.original_filename || asset.id }))]
+      if (state!.selectedSource?.id === step.source && !state!.assets.some((asset) => asset.id === step.source)) sourceItems.push({ value: step.source, label: `Selected image: ${state!.selectedSource.original_filename || step.source}` })
       panel.append(control('Source image override', select(sourceItems, step.source, (value) => { step.source = value; changed(); render() })))
+      const browserControl = el('div', '', 'qg-browser-control')
+      browserButton = button('Image Browser', openImageBrowser)
+      browserHint = el('small'); browserHint.id = 'qg-image-browser-hint'
+      browserButton.setAttribute('aria-describedby', browserHint.id)
+      browserControl.append(browserButton, browserHint); panel.append(browserControl)
+      updateBrowserControl()
       if (step.source !== 'none') panel.append(el('small', 'The source image override replaces the workflow’s Load Image value.'))
     }
     const controls = fieldControls(workflow).filter((field) => (step.bypassLoras || !field.semantic.startsWith('lora_')))
@@ -165,7 +231,7 @@ export function setup(ctx: SpindleFrontendContext) {
     return panel
   }
   async function generate() {
-    if (!draft || !state) return
+    if (!draft || !state || validatingSource) return
     const chatId = ctx.getActiveChat().chatId
     if (!chatId) { renderStatus(); return }
     starting = true; error = ''; renderStatus()
@@ -204,7 +270,7 @@ export function setup(ctx: SpindleFrontendContext) {
     tab.setBadge(busy ? '…' : null)
     const actions = el('div', '', 'qg-actions')
     const generateButton = button(`Generate ${draft?.kind ?? 'video'}`, generate, 'qg-primary')
-    generateButton.disabled = !chatId || busy || inserting.size > 0 || !state?.supported || !state.catalog?.connections.length
+    generateButton.disabled = !chatId || busy || validatingSource || inserting.size > 0 || !state?.supported || !state.catalog?.connections.length
     actions.append(generateButton)
     if (!chatId) {
       const hint = el('small', 'Open a chat to generate.')
@@ -287,6 +353,7 @@ export function setup(ctx: SpindleFrontendContext) {
   }
   function render() {
     if (disposed) return
+    browserButton = undefined; browserHint = undefined
     root.replaceChildren()
     root.append(el('h2', 'QuickGen'), el('p', 'Choose an existing ComfyUI workflow, Main Preset, and field values. Generate one image or video at a time.'))
     if (!state || !draft) { root.append(el('p', error || 'Loading QuickGen…')); return }
@@ -300,6 +367,9 @@ export function setup(ctx: SpindleFrontendContext) {
     root.append(el('footer', 'Your last selection is remembered in QuickGen. “Use active” is captured when a run starts. ImgGen’s active selections stay unchanged.'))
   }
   async function refresh() {
+    cancelPicker()
+    browserAvailable = false
+    ctx.events.emit?.(pickerEvents.probe, { version: 1, requester: 'quick_gen' })
     error = ''
     const next = await request<Bootstrap>('qg_bootstrap')
     if (disposed) return
@@ -308,14 +378,16 @@ export function setup(ctx: SpindleFrontendContext) {
     draft = clone(state.settings)
     render()
   }
-  const offChat = ctx.events.on('CHAT_SWITCHED', () => renderStatus())
-  const offChatState = ctx.state?.subscribe('chat.active', () => renderStatus())
+  const offChat = ctx.events.on('CHAT_SWITCHED', () => { cancelPicker(); renderStatus() })
+  const offChatState = ctx.state?.subscribe('chat.active', () => { cancelPicker(); renderStatus() })
   const offConnections = ctx.events.on('IMAGE_GEN_CONNECTION_CHANGED', () => { if (savedLabel) savedLabel.textContent = 'Connections changed · click Refresh' })
   render()
   void refresh().catch((reason) => { error = reason instanceof Error ? reason.message : String(reason); render() })
   return () => {
-    disposed = true; clearTimeout(saveTimer)
+    disposed = true
+    cancelPicker()
+    clearTimeout(saveTimer)
     for (const callback of pending.values()) { clearTimeout(callback.timer); callback.reject(new Error('QuickGen panel closed.')) }
-    pending.clear(); offBackend(); offChat(); offChatState?.(); offConnections(); offAction(); action.destroy(); tab.destroy(); removeStyle()
+    pending.clear(); offBackend(); offChat(); offChatState?.(); offConnections(); offBrowserAvailability(); offBrowserUnload(); offPickerResult(); offAction(); action.destroy(); tab.destroy(); removeStyle()
   }
 }

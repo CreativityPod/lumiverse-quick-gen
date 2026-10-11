@@ -7,6 +7,7 @@ export const styles = `
 .qg button {cursor:pointer; font-weight:500; padding:8px 14px; background:transparent; color:var(--qg-muted); white-space:nowrap} .qg button:hover {background:var(--lumiverse-fill-subtle); color:var(--lumiverse-text)} .qg button:disabled {opacity:.5; cursor:default}
 .qg button.qg-primary {background:var(--lumiverse-primary,#237d8e); color:var(--lumiverse-primary-contrast,#fff); border-color:var(--lumiverse-primary,#237d8e)} .qg button.qg-primary:hover {background:var(--lumiverse-primary-hover,var(--lumiverse-primary,#237d8e))} .qg button.qg-danger {color:var(--lumiverse-danger,#f6a6a6)}
 .qg-step {border:1px solid var(--qg-border); border-radius:10px; padding:14px; background:var(--lumiverse-fill-subtle,rgba(255,255,255,.025))}
+.qg-browser-control {display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin:-6px 0 16px} .qg-browser-control small {flex:1 1 180px}
 
 .qg label {display:block; font-size:calc(13px * var(--lumiverse-font-scale,1)); margin:0 0 16px} .qg label>span {display:block; margin-bottom:6px; font-weight:500; color:var(--qg-muted)} .qg small {font-size:calc(11px * var(--lumiverse-font-scale,1)); color:var(--lumiverse-text-dim,var(--qg-muted))}
 .qg details {border-top:1px solid var(--qg-border); padding-top:12px; margin-top:12px} .qg summary {font-size:12px; cursor:pointer; margin-bottom:12px} .qg .qg-check {display:flex; gap:8px; align-items:center}

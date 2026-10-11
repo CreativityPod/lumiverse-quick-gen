@@ -117,7 +117,7 @@ test.each([{ dropdown: true, initial: true, custom: true }, { dropdown: false, i
   await Bun.sleep(1)
   expect(root.textContent).toContain(`Workflow fields · ${custom ? 3 : 2}`)
   expect(root.querySelectorAll('.qg-step')).toHaveLength(1)
-  expect([...root.querySelectorAll('button')].map((button) => button.textContent)).toEqual(['Refresh', 'Generate video'])
+  expect([...root.querySelectorAll('button')].map((button) => button.textContent)).toEqual(initial ? ['Refresh', 'Image Browser', 'Generate video'] : ['Refresh', 'Generate video'])
   const imageLabels = [...root.querySelectorAll('label')].filter((label) => label.textContent?.startsWith('image ·'))
   expect(imageLabels).toHaveLength(custom ? 1 : 0)
   if (custom) {
