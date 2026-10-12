@@ -226,7 +226,12 @@ function setup(ctx) {
       showError(new Error("Image Browser did not open. Enable Image Browser v0.1.9 or later, then refresh QuickGen."));
     }, 3000);
     updateBrowserControl();
-    ctx.events.emit(pickerEvents.request, { version: 1, requester: "quick_gen", requestId: picker.requestId });
+    ctx.events.emit(pickerEvents.request, {
+      version: 1,
+      requester: "quick_gen",
+      requestId: picker.requestId,
+      ...!["none", "last"].includes(picker.source) && picker.source ? { selectedImageId: picker.source } : {}
+    });
   }
   const offBrowserAvailability = ctx.events.on(pickerEvents.availability, (payload) => {
     const message = payload;

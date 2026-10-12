@@ -89,6 +89,29 @@ test('picker accepts one authenticated image, shows its filename, and ignores du
   expect(h.button().disabled).toBe(false)
 })
 
+test('reopening the picker sends the current source ID, including a newly selected upload', async () => {
+  const h = await harness({ available: true, source: 'generated' })
+  const lastRequest = () => h.emitted.filter((event) => event.name === 'image_browser:picker:request').at(-1)!.payload
+  h.button().click(); await Bun.sleep(1)
+  expect(lastRequest().selectedImageId).toBe('generated')
+  h.result('selected', { imageId: 'upload' }); await Bun.sleep(1)
+  h.button().click(); await Bun.sleep(1)
+  expect(lastRequest().selectedImageId).toBe('upload')
+  h.result('cancelled'); await Bun.sleep(1)
+  const source = h.sourceSelect()
+  source.value = 'generated'
+  source.dispatchEvent(new document.defaultView!.Event('change'))
+  h.button().click(); await Bun.sleep(1)
+  expect(lastRequest().selectedImageId).toBe('generated')
+})
+
+test.each(['none', 'last'])('source option %s opens a fresh picker without an image anchor', async (source) => {
+  const h = await harness({ available: true, source })
+  h.button().click(); await Bun.sleep(1)
+  const request = h.emitted.filter((event) => event.name === 'image_browser:picker:request').at(-1)!.payload
+  expect(request.selectedImageId).toBeUndefined()
+})
+
 test.each(['cancelled', 'wrong-request', 'chat-changed', 'unavailable'] as const)('picker preserves source after %s', async (scenario) => {
   const h = await harness({ available: true, source: 'generated' })
   h.button().click(); await Bun.sleep(1)

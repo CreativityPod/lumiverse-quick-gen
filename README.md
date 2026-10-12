@@ -20,6 +20,7 @@ To update QuickGen, replace the installed extension files with the latest versio
 - **Workflow controls:** Adjust field values and optionally override the prompt. QuickGen remembers your last selections.
 - **Source images:** Choose from up to 100 recent generated images from ImgGen and QuickGen, or select **Previous QuickGen image**, when the workflow supports an image source. Click **Refresh** to update the list.
 - **Image Browser integration:** Select **Image Browser** to browse generated images and uploads, search the full library, and choose one source image. Select **Use image** to confirm or **Cancel** to keep the current source. Image Browser v0.1.9 or later must be enabled with its **Images** permission; otherwise, the button is disabled.
+- **Find the current source:** Reopen **Image Browser** to reveal your selected source on its current page. Uploaded images open in Non-generated. With no specific source image, or if the selected image is unavailable, the picker starts on Generated page 1.
 - **Chat output:** Preview a result, insert it as a new chat message, or attach it to the last message. Unposted image previews can also be added to chat afterward. For videos, select the chat output before generating.
 - **Progress and cancellation:** Follow generation progress, cancel an active run, and open completed images or videos.
 - **Result status:** See whether a result has been inserted or attached. Unavailable media displays an explanatory message. Prompt details are hidden during generation and when the corresponding result is unavailable.
